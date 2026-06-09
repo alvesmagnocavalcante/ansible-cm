@@ -23,28 +23,40 @@
         dest: "{{ zabbix_msi_dest }}"
         force: false
 
-    - name: Remover agentes anteriores (antigo ou Agent 2 antigo)
-      ansible.windows.win_shell: |
-        # Para o Agent antigo
-        if (Test-Path "C:\Program Files\Zabbix Agent\zabbix_agentd.exe") {
-          & "C:\Program Files\Zabbix Agent\zabbix_agentd.exe" --stop 2>$null
-          & "C:\Program Files\Zabbix Agent\zabbix_agentd.exe" --uninstall 2>$null
-        }
-        # Para o Agent 2 antigo
-        if (Test-Path "C:\Program Files\Zabbix Agent 2\zabbix_agent2.exe") {
-          & "C:\Program Files\Zabbix Agent 2\zabbix_agent2.exe" --stop 2>$null
-          & "C:\Program Files\Zabbix Agent 2\zabbix_agent2.exe" --uninstall 2>$null
-        }
-        sc.exe delete "Zabbix Agent" 2>$null
-        sc.exe delete "Zabbix Agent 2" 2>$null
-        Start-Sleep -Seconds 3
+    - name: Parar serviços antigos se existirem
+      ansible.windows.win_service:
+        name: "{{ item }}"
+        state: stopped
+      loop:
+        - "Zabbix Agent"
+        - "Zabbix Agent 2"
       failed_when: false
 
-    - name: Instalar Zabbix Agent 2
+    - name: Forçar desinstalação de qualquer Zabbix Agent via MSI (Limpeza)
+      ansible.windows.win_package:
+        path: "{{ zabbix_msi_dest }}"
+        state: absent
+      failed_when: false
+
+    - name: Garantir remoção completa de resquícios de serviços e arquivos
+      ansible.windows.win_shell: |
+        # Remove serviços travados no registro do Windows
+        sc.exe delete "Zabbix Agent" 2>$null
+        sc.exe delete "Zabbix Agent 2" 2>$null
+        
+        # Aguarda o Windows liberar os arquivos
+        Start-Sleep -Seconds 5
+        
+        # Força a remoção das pastas antigas para não dar conflito de permissão
+        if (Test-Path "C:\Program Files\Zabbix Agent") { Remove-Item -Path "C:\Program Files\Zabbix Agent" -Recurse -Force -ErrorAction SilentlyContinue }
+        if (Test-Path "C:\Program Files\Zabbix Agent 2") { Remove-Item -Path "C:\Program Files\Zabbix Agent 2" -Recurse -Force -ErrorAction SilentlyContinue }
+      failed_when: false
+
+    - name: Instalar Zabbix Agent 2 (Instalação Limpa)
       ansible.windows.win_package:
         path: "{{ zabbix_msi_dest }}"
         state: present
-        # Corrigido argumentos e aspas para o instalador oficial do Zabbix Agent 2
+        # Parâmetros oficiais corrigidos para a arquitetura do Agent 2
         arguments: /quiet /norestart SERVER="{{ zabbix_server }}" SERVERACTIVE="{{ zabbix_server }}" HOSTNAME="{{ zabbix_hostname }}" ADD_TO_PATH=1
 
     - name: Abrir porta 10050 no firewall
@@ -57,15 +69,8 @@
         state: present
         enabled: true
 
-    - name: Descobrir o nome real do serviço instalado
-      ansible.windows.win_shell: |
-        (Get-Service -Name *zabbix*).Name
-      register: zabbix_service_name
-      changed_when: false
-
-    - name: Garantir serviço do Zabbix Agent rodando
+    - name: Garantir serviço do Zabbix Agent 2 rodando
       ansible.windows.win_service:
-        # Usa dinamicamente o nome encontrado no passo anterior (evita quebrar se for "Zabbix Agent 2" ou "Zabbix Agent")
-        name: "{{ zabbix_service_name.stdout | trim }}"
+        name: "Zabbix Agent 2"
         start_mode: auto
         state: started
