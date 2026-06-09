@@ -1,0 +1,6 @@
+10.197.0.130
+
+
+
+Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private
+winrm quickconfig
