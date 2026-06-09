@@ -1,15 +1,14 @@
 ---
-- name: Instalar Zabbix Agent no Windows
+- name: Instalar Zabbix Agent 2 no Windows
   hosts: windows_hosts
   gather_facts: false
 
   vars:
     zabbix_server: "10.197.0.130"
     zabbix_hostname: "{{ inventory_hostname }}"
-    zabbix_msi_url: "https://cdn.zabbix.com/zabbix/binaries/stable/7.4/7.4.11/zabbix_agent-7.4.11-windows-amd64-openssl.msi"
-    zabbix_msi_dest: "C:\\Temp\\zabbix_agent.msi"
-    zabbix_guid: "{09B04A30-A087-49BB-9DD7-E591EED9E991}"
-    zabbix_service_name: "Zabbix Agent"
+    # Atualizado para a URL do Zabbix Agent 2
+    zabbix_msi_url: "https://cdn.zabbix.com/zabbix/binaries/stable/7.4/7.4.11/zabbix_agent2-7.4.11-windows-amd64-openssl.msi"
+    zabbix_msi_dest: "C:\\Temp\\zabbix_agent2.msi"
 
   tasks:
 
@@ -18,59 +17,39 @@
         path: C:\Temp
         state: directory
 
-    - name: Baixar MSI
+    - name: Baixar MSI do Zabbix Agent 2
       ansible.windows.win_get_url:
         url: "{{ zabbix_msi_url }}"
         dest: "{{ zabbix_msi_dest }}"
         force: false
 
-    - name: Desinstalar versão anterior pelo GUID
+    - name: Remover agentes anteriores (antigo ou Agent 2 antigo)
       ansible.windows.win_shell: |
-        Start-Process -FilePath "msiexec.exe" `
-          -ArgumentList "/x `"{{ zabbix_guid }}`" /quiet /norestart" `
-          -Wait
-      args:
-        executable: powershell
-      async: 60
-      poll: 5
+        # Para o Agent antigo
+        if (Test-Path "C:\Program Files\Zabbix Agent\zabbix_agentd.exe") {
+          & "C:\Program Files\Zabbix Agent\zabbix_agentd.exe" --stop 2>$null
+          & "C:\Program Files\Zabbix Agent\zabbix_agentd.exe" --uninstall 2>$null
+        }
+        # Para o Agent 2 antigo
+        if (Test-Path "C:\Program Files\Zabbix Agent 2\zabbix_agent2.exe") {
+          & "C:\Program Files\Zabbix Agent 2\zabbix_agent2.exe" --stop 2>$null
+          & "C:\Program Files\Zabbix Agent 2\zabbix_agent2.exe" --uninstall 2>$null
+        }
+        sc.exe delete "Zabbix Agent" 2>$null
+        sc.exe delete "Zabbix Agent 2" 2>$null
+        Start-Sleep -Seconds 3
       failed_when: false
 
-    - name: Aguardar host voltar após uninstall
-      ansible.builtin.wait_for:
-        host: "{{ inventory_hostname }}"
-        port: 5985
-        delay: 15
-        timeout: 180
-        state: started
-      delegate_to: localhost
-
-    - name: Instalar agente via msiexec
-      ansible.windows.win_shell: |
-        $result = Start-Process -FilePath "msiexec.exe" `
-          -ArgumentList @(
-            "/i `"{{ zabbix_msi_dest }}`""
-            "/quiet"
-            "/norestart"
-            "/log `"$env:TEMP\zabbix_install.log`""
-            "SERVER={{ zabbix_server }}"
-            "SERVERACTIVE={{ zabbix_server }}"
-            "HOSTNAME={{ zabbix_hostname }}"
-            "ENABLEPATH=1"
-          ) `
-          -Wait -PassThru
-        exit $result.ExitCode
-      args:
-        executable: powershell
-      register: msi_install
-      failed_when: msi_install.rc not in [0, 3010]
-
-    - name: Aguardar registro do serviço
-      ansible.windows.win_wait_for:
-        timeout: 15
+    - name: Instalar Zabbix Agent 2
+      ansible.windows.win_package:
+        path: "{{ zabbix_msi_dest }}"
+        state: present
+        # Nota: O instalador do Agent 2 aceita os mesmos parâmetros básicos via MSI
+        arguments: /quiet /norestart SERVER={{ zabbix_server }} SERVERACTIVE={{ zabbix_server }} HOSTNAME={{ zabbix_hostname }} ENABLEPATH=1
 
     - name: Abrir porta 10050 no firewall
       community.windows.win_firewall_rule:
-        name: "Zabbix Agent"
+        name: "Zabbix Agent 2"
         localport: 10050
         protocol: tcp
         direction: in
@@ -78,21 +57,8 @@
         state: present
         enabled: true
 
-    - name: Garantir serviço iniciado e automático
+    - name: Garantir serviço do Zabbix Agent 2 rodando
       ansible.windows.win_service:
-        name: "{{ zabbix_service_name }}"
+        name: "Zabbix Agent 2" # O nome do serviço muda para "Zabbix Agent 2"
         start_mode: auto
         state: started
-
-    - name: Confirmar status do serviço
-      ansible.windows.win_shell: |
-        Get-Service "{{ zabbix_service_name }}" |
-          Select-Object Name, Status, StartType | ConvertTo-Json -Compress
-      args:
-        executable: powershell
-      register: svc_status
-      changed_when: false
-
-    - name: Exibir status final
-      ansible.builtin.debug:
-        msg: "{{ svc_status.stdout }}"
