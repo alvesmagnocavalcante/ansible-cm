@@ -6,7 +6,7 @@
   vars:
     zabbix_server: "10.197.0.130"
     zabbix_hostname: "{{ inventory_hostname }}"
-    # Atualizado para a URL do Zabbix Agent 2
+    # URL do Zabbix Agent 2
     zabbix_msi_url: "https://cdn.zabbix.com/zabbix/binaries/stable/7.4/7.4.11/zabbix_agent2-7.4.11-windows-amd64-openssl.msi"
     zabbix_msi_dest: "C:\\Temp\\zabbix_agent2.msi"
 
@@ -44,8 +44,8 @@
       ansible.windows.win_package:
         path: "{{ zabbix_msi_dest }}"
         state: present
-        # Nota: O instalador do Agent 2 aceita os mesmos parâmetros básicos via MSI
-        arguments: /quiet /norestart SERVER={{ zabbix_server }} SERVERACTIVE={{ zabbix_server }} HOSTNAME={{ zabbix_hostname }} ENABLEPATH=1
+        # Corrigido argumentos e aspas para o instalador oficial do Zabbix Agent 2
+        arguments: /quiet /norestart SERVER="{{ zabbix_server }}" SERVERACTIVE="{{ zabbix_server }}" HOSTNAME="{{ zabbix_hostname }}" ADD_TO_PATH=1
 
     - name: Abrir porta 10050 no firewall
       community.windows.win_firewall_rule:
@@ -57,8 +57,15 @@
         state: present
         enabled: true
 
-    - name: Garantir serviço do Zabbix Agent 2 rodando
+    - name: Descobrir o nome real do serviço instalado
+      ansible.windows.win_shell: |
+        (Get-Service -Name *zabbix*).Name
+      register: zabbix_service_name
+      changed_when: false
+
+    - name: Garantir serviço do Zabbix Agent rodando
       ansible.windows.win_service:
-        name: "Zabbix Agent 2" # O nome do serviço muda para "Zabbix Agent 2"
+        # Usa dinamicamente o nome encontrado no passo anterior (evita quebrar se for "Zabbix Agent 2" ou "Zabbix Agent")
+        name: "{{ zabbix_service_name.stdout | trim }}"
         start_mode: auto
         state: started
