@@ -80,7 +80,7 @@
     # 3. INSTALAÇÃO COM LOG COMPLETO
     # =========================================================================
 
-    - name: Instalar Zabbix Agent 2 via msiexec (com log detalhado)
+    - name: Instalar Zabbix Agent 2 via msiexec
       ansible.windows.win_shell: |
         $logFile = "{{ zabbix_msi_log }}"
         $result = Start-Process -FilePath "msiexec.exe" -ArgumentList @(
