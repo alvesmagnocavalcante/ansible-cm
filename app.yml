@@ -131,54 +131,6 @@
         zabbix_exe_exists: "{{ 'EXE_EXISTS=True' in (install_probe.stdout | default('')) }}"
 
     # =========================================================================
-    # 5. FALLBACK: MSI não registrou o serviço
-    # =========================================================================
-
-    - name: "[FALLBACK] Abortar se executável também não existe (MSI falhou totalmente)"
-      ansible.builtin.fail:
-        msg: >
-          A instalação MSI falhou completamente: nem o serviço nem o executável
-          foram encontrados. Verifique msi_result.stdout_lines acima para o
-          erro detalhado do msiexec.
-      when:
-        - not zabbix_svc_exists
-        - not zabbix_exe_exists
-
-    - name: "[FALLBACK] Criar diretório de logs"
-      ansible.windows.win_file:
-        path: "{{ zabbix_log_dir }}"
-        state: directory
-      when: not zabbix_svc_exists
-
-    - name: "[FALLBACK] Criar zabbix_agent2.conf"
-      ansible.windows.win_copy:
-        content: |
-          LogFile={{ zabbix_log_dir }}\zabbix_agent2.log
-          LogFileSize=10
-          Server={{ zabbix_server }}
-          ServerActive={{ zabbix_server }}
-          Hostname={{ zabbix_hostname }}
-          ListenPort=10050
-          Timeout=30
-          Include=C:\Program Files\Zabbix Agent 2\zabbix_agent2.d\*.conf
-        dest: "{{ zabbix_conf }}"
-      when: not zabbix_svc_exists
-
-    - name: "[FALLBACK] Registrar serviço via zabbix_agent2.exe --install"
-      ansible.windows.win_shell: |
-        & "{{ zabbix_agent2_exe }}" --config "{{ zabbix_conf }}" --install
-        Start-Sleep -Seconds 3
-        $svc = Get-Service -Name "Zabbix Agent 2" -ErrorAction SilentlyContinue
-        if ($svc) {
-          Write-Output "Servico registrado com sucesso via --install"
-          exit 0
-        } else {
-          Write-Error "Falha ao registrar servico via --install"
-          exit 1
-        }
-      when: not zabbix_svc_exists
-
-    # =========================================================================
     # 6. AGUARDAR SCM E INICIAR SERVIÇO
     # =========================================================================
 
