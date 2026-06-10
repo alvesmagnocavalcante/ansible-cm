@@ -105,10 +105,6 @@
       register: msi_result
       failed_when: msi_result.rc is defined and msi_result.rc != 0
 
-    - name: Mostrar saída da instalação MSI
-      ansible.builtin.debug:
-        var: msi_result.stdout_lines
-
     # =========================================================================
     # 4. DETECTAR SE SERVIÇO FOI CRIADO — resultado em set_fact (sem condicional frágil)
     # =========================================================================
@@ -120,10 +116,6 @@
         Write-Output "SVC_EXISTS=$svcExists"
         Write-Output "EXE_EXISTS=$exeExists"
       register: install_probe
-
-    - name: Mostrar probe pós-instalação
-      ansible.builtin.debug:
-        var: install_probe.stdout_lines
 
     - name: Definir flags de instalação como facts
       ansible.builtin.set_fact:
