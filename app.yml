@@ -103,48 +103,52 @@
 
         exit $result.ExitCode
       register: msi_result
-      failed_when: msi_result.rc != 0
+      failed_when: msi_result.rc is defined and msi_result.rc != 0
 
     - name: Mostrar saída da instalação MSI
       ansible.builtin.debug:
         var: msi_result.stdout_lines
 
     # =========================================================================
-    # 4. DETECTAR SE SERVIÇO FOI CRIADO (rc=0 → existe, rc=1 → ausente)
+    # 4. DETECTAR SE SERVIÇO FOI CRIADO — resultado em set_fact (sem condicional frágil)
     # =========================================================================
 
-    - name: Verificar se serviço foi criado pela instalação MSI
+    - name: Checar existência do serviço e do executável após instalação MSI
       ansible.windows.win_shell: |
-        $svc = Get-Service -Name "Zabbix Agent 2" -ErrorAction SilentlyContinue
-        if ($svc) { exit 0 } else { exit 1 }
-      register: svc_check_after_install
-      failed_when: false
+        $svcExists = $null -ne (Get-Service -Name "Zabbix Agent 2" -ErrorAction SilentlyContinue)
+        $exeExists = Test-Path "{{ zabbix_agent2_exe }}"
+        Write-Output "SVC_EXISTS=$svcExists"
+        Write-Output "EXE_EXISTS=$exeExists"
+      register: install_probe
+
+    - name: Mostrar probe pós-instalação
+      ansible.builtin.debug:
+        var: install_probe.stdout_lines
+
+    - name: Definir flags de instalação como facts
+      ansible.builtin.set_fact:
+        zabbix_svc_exists: "{{ 'SVC_EXISTS=True' in (install_probe.stdout | default('')) }}"
+        zabbix_exe_exists: "{{ 'EXE_EXISTS=True' in (install_probe.stdout | default('')) }}"
 
     # =========================================================================
-    # 5. FALLBACK: MSI extraiu os arquivos mas não registrou o serviço
+    # 5. FALLBACK: MSI não registrou o serviço
     # =========================================================================
-
-    - name: "[FALLBACK] Verificar se executável existe"
-      ansible.windows.win_stat:
-        path: "{{ zabbix_agent2_exe }}"
-      register: agent2_exe_stat
-      when: svc_check_after_install.rc != 0
 
     - name: "[FALLBACK] Abortar se executável também não existe (MSI falhou totalmente)"
       ansible.builtin.fail:
         msg: >
           A instalação MSI falhou completamente: nem o serviço nem o executável
-          foram encontrados em {{ zabbix_agent2_exe }}.
-          Verifique msi_result.stdout_lines acima para o erro do msiexec.
+          foram encontrados. Verifique msi_result.stdout_lines acima para o
+          erro detalhado do msiexec.
       when:
-        - svc_check_after_install.rc != 0
-        - not agent2_exe_stat.stat.exists
+        - not zabbix_svc_exists
+        - not zabbix_exe_exists
 
     - name: "[FALLBACK] Criar diretório de logs"
       ansible.windows.win_file:
         path: "{{ zabbix_log_dir }}"
         state: directory
-      when: svc_check_after_install.rc != 0
+      when: not zabbix_svc_exists
 
     - name: "[FALLBACK] Criar zabbix_agent2.conf"
       ansible.windows.win_copy:
@@ -158,7 +162,7 @@
           Timeout=30
           Include=C:\Program Files\Zabbix Agent 2\zabbix_agent2.d\*.conf
         dest: "{{ zabbix_conf }}"
-      when: svc_check_after_install.rc != 0
+      when: not zabbix_svc_exists
 
     - name: "[FALLBACK] Registrar serviço via zabbix_agent2.exe --install"
       ansible.windows.win_shell: |
@@ -172,7 +176,7 @@
           Write-Error "Falha ao registrar servico via --install"
           exit 1
         }
-      when: svc_check_after_install.rc != 0
+      when: not zabbix_svc_exists
 
     # =========================================================================
     # 6. AGUARDAR SCM E INICIAR SERVIÇO
