@@ -1,6 +1,6 @@
 ---
 - name: Limpeza Segura de Arquivos Temporários no Windows
-  hosts: windows
+  hosts: all
   gather_facts: true
   tasks:
     - name: 1. Limpar conteúdo do diretório Temp do Sistema (C:\Windows\Temp)
@@ -11,7 +11,7 @@
             Write-Output "Changed"
         }
       register: clean_temp_result
-      changed_when: clean_temp_result.stdout.Contains("Changed")
+      changed_when: "'Changed' in clean_temp_result.stdout"
       failed_when: false
 
     - name: 2. Limpar arquivos temporários de usuários via PowerShell (Seguro)
@@ -30,7 +30,7 @@
         }
         if ($changed) { Write-Output "Changed" }
       register: clean_user_temp_result
-      changed_when: clean_user_temp_result.stdout.Contains("Changed")
+      changed_when: "'Changed' in clean_user_temp_result.stdout"
       failed_when: false
 
     - name: 3. Executar o Disk Cleanup nativo (Limpeza de Disco) para Windows Update e Log
@@ -49,5 +49,5 @@
         Start-Process cleanmgr.exe -ArgumentList "/sagerun:1" -Wait
         if ($changed) { Write-Output "Changed" }
       register: disk_cleanup_result
-      changed_when: disk_cleanup_result.stdout.Contains("Changed")
+      changed_when: "'Changed' in disk_cleanup_result.stdout"
       failed_when: false
