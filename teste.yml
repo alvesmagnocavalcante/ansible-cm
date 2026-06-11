@@ -1,5 +1,6 @@
 ---
-- hosts: windows_hosts
+- name: Teste
+  hosts: windows_hosts
   gather_facts: false
 
   tasks:

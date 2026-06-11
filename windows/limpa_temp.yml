@@ -1,0 +1,53 @@
+---
+- name: Limpeza Segura de Arquivos Temporários no Windows
+  hosts: windows
+  gather_facts: true
+  tasks:
+    - name: 1. Limpar conteúdo do diretório Temp do Sistema (C:\Windows\Temp)
+      ansible.windows.win_shell: |
+        $items = Get-ChildItem -Path "C:\Windows\Temp" -Force
+        if ($items) {
+            $items | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Output "Changed"
+        }
+      register: clean_temp_result
+      changed_when: clean_temp_result.stdout.Contains("Changed")
+      failed_when: false
+
+    - name: 2. Limpar arquivos temporários de usuários via PowerShell (Seguro)
+      ansible.windows.win_shell: |
+        $UserProfiles = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\*" | Select-Object -ExpandProperty ProfileImagePath
+        $changed = $false
+        foreach ($Profile in $UserProfiles) {
+            $TempPath = "$Profile\AppData\Local\Temp"
+            if (Test-Path $TempPath) {
+                $items = Get-ChildItem -Path $TempPath -Force
+                if ($items) {
+                    $items | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+                    $changed = $true
+                }
+            }
+        }
+        if ($changed) { Write-Output "Changed" }
+      register: clean_user_temp_result
+      changed_when: clean_user_temp_result.stdout.Contains("Changed")
+      failed_when: false
+
+    - name: 3. Executar o Disk Cleanup nativo (Limpeza de Disco) para Windows Update e Log
+      ansible.windows.win_shell: |
+        $RegPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer\VolumeCaches"
+        $Caches = Get-ChildItem $RegPath
+        $changed = $false
+        foreach ($Cache in $Caches) {
+            $value = Get-ItemProperty -Path $Cache.PsPath -Name "StateFlags0001" -ErrorAction SilentlyContinue
+            if ($null -eq $value -or $value.StateFlags0001 -ne 2) {
+                New-ItemProperty -Path $Cache.PsPath -Name "StateFlags0001" -Value 2 -PropertyType DWord -Force | Out-Null
+                $changed = $true
+            }
+        }
+        # Inicia a limpeza em segundo plano usando a configuração acima
+        Start-Process cleanmgr.exe -ArgumentList "/sagerun:1" -Wait
+        if ($changed) { Write-Output "Changed" }
+      register: disk_cleanup_result
+      changed_when: disk_cleanup_result.stdout.Contains("Changed")
+      failed_when: false
