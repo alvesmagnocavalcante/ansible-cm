@@ -1,0 +1,11 @@
+---
+- name: Reiniciar maquinas Windows
+  hosts: windows
+  gather_facts: no
+
+  tasks:
+    - name: Reiniciar e aguardar voltar online
+      ansible.windows.win_reboot:
+        reboot_timeout: 600
+        msg: "Reinicializacao via Ansible - aguarde"
+        pre_reboot_delay: 15
