@@ -3,7 +3,7 @@
   hosts: windows_hosts
   gather_facts: false
   vars:
-    zabbix_server: "10.197.0.130"
+    zabbix_server: "10.197.3.2"
     zabbix_hostname: "{{ inventory_hostname }}"
     zabbix_msi_url: "https://cdn.zabbix.com/zabbix/binaries/stable/7.4/7.4.11/zabbix_agent2-7.4.11-windows-amd64-openssl.msi"
     zabbix_msi_dest: "C:\\Temp\\zabbix_agent2.msi"
