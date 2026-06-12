@@ -1,6 +1,6 @@
 ---
 - name: Reiniciar maquinas Windows
-  hosts: windows
+  hosts: all
   gather_facts: no
 
   tasks:
