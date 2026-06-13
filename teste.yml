@@ -1,6 +1,6 @@
 ---
 - name: Teste Linux
-  hosts: linux_hosts
+  hosts: all
   gather_facts: false
 
   tasks:
