@@ -1,8 +1,8 @@
 ---
-- name: Teste
-  hosts: windows_hosts
+- name: Teste Linux
+  hosts: linux_hosts
   gather_facts: false
 
   tasks:
-    - name: Teste
-      ansible.windows.win_ping:
+    - name: Teste Ping SSH
+      ansible.builtin.ping:
