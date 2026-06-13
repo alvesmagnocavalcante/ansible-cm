@@ -1,8 +1,22 @@
 ---
-- name: Teste Linux
-  hosts: windows_hosts
-  gather_facts: false
-
+- name: Teste de conectividade - Linux
+  hosts: linux_hosts
+  gather_facts: yes
   tasks:
-    - name: Teste Ping SSH
+    - name: Ping (Linux)
       ansible.builtin.ping:
+
+    - name: Mostrar informações do sistema
+      ansible.builtin.debug:
+        msg: "Host {{ inventory_hostname }} | OS: {{ ansible_distribution }} {{ ansible_distribution_version }} | Kernel: {{ ansible_kernel }}"
+
+- name: Teste de conectividade - Windows
+  hosts: windows_hosts
+  gather_facts: yes
+  tasks:
+    - name: Ping (Windows)
+      ansible.windows.win_ping:
+
+    - name: Mostrar informações do sistema
+      ansible.builtin.debug:
+        msg: "Host {{ inventory_hostname }} | OS: {{ ansible_distribution }} {{ ansible_distribution_version }} | Hostname: {{ ansible_hostname }}"
