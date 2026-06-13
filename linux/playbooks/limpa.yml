@@ -1,0 +1,79 @@
+---
+- name: Limpeza Segura de Arquivos Temporários no Linux
+  hosts: all
+  gather_facts: true
+  become: true
+  tasks:
+    - name: 1. Limpar conteúdo do diretório /tmp
+      ansible.builtin.shell: |
+        items=$(find /tmp -mindepth 1 -mount 2>/dev/null)
+        if [ -n "$items" ]; then
+            find /tmp -mindepth 1 -mount -delete 2>/dev/null
+            echo "Changed"
+        fi
+      register: clean_tmp_result
+      changed_when: "'Changed' in clean_tmp_result.stdout"
+      failed_when: false
+      args:
+        executable: /bin/bash
+
+    - name: 2. Limpar arquivos temporários de usuários (~/.cache e /var/tmp)
+      ansible.builtin.shell: |
+        changed=false
+
+        # Limpa /var/tmp
+        if [ -n "$(find /var/tmp -mindepth 1 -mount 2>/dev/null)" ]; then
+            find /var/tmp -mindepth 1 -mount -delete 2>/dev/null
+            changed=true
+        fi
+
+        # Limpa o cache de cada usuário com home válido
+        for home in $(getent passwd | awk -F: '$6 ~ /^\/home|^\/root/ {print $6}'); do
+            cache_path="$home/.cache"
+            if [ -d "$cache_path" ] && [ -n "$(find "$cache_path" -mindepth 1 2>/dev/null)" ]; then
+                find "$cache_path" -mindepth 1 -delete 2>/dev/null
+                changed=true
+            fi
+        done
+
+        if [ "$changed" = true ]; then echo "Changed"; fi
+      register: clean_user_temp_result
+      changed_when: "'Changed' in clean_user_temp_result.stdout"
+      failed_when: false
+      args:
+        executable: /bin/bash
+
+    - name: 3. Limpeza de cache de pacotes e logs antigos (Disk Cleanup nativo)
+      ansible.builtin.shell: |
+        changed=false
+
+        # Limpa cache de pacotes (apt ou yum/dnf)
+        if command -v apt-get >/dev/null 2>&1; then
+            before=$(du -sb /var/cache/apt/archives 2>/dev/null | awk '{print $1}')
+            apt-get clean
+            after=$(du -sb /var/cache/apt/archives 2>/dev/null | awk '{print $1}')
+            if [ "$before" != "$after" ]; then changed=true; fi
+        elif command -v dnf >/dev/null 2>&1; then
+            dnf clean all >/dev/null 2>&1 && changed=true
+        elif command -v yum >/dev/null 2>&1; then
+            yum clean all >/dev/null 2>&1 && changed=true
+        fi
+
+        # Limpa logs rotacionados antigos (.gz, .1, .old) em /var/log
+        old_logs=$(find /var/log -type f \( -name "*.gz" -o -name "*.old" -o -regex ".*\.[0-9]+" \) 2>/dev/null)
+        if [ -n "$old_logs" ]; then
+            echo "$old_logs" | xargs rm -f 2>/dev/null
+            changed=true
+        fi
+
+        # Limpa logs do journald, mantendo apenas os últimos 3 dias
+        if command -v journalctl >/dev/null 2>&1; then
+            journalctl --vacuum-time=3d >/dev/null 2>&1 && changed=true
+        fi
+
+        if [ "$changed" = true ]; then echo "Changed"; fi
+      register: disk_cleanup_result
+      changed_when: "'Changed' in disk_cleanup_result.stdout"
+      failed_when: false
+      args:
+        executable: /bin/bash
