@@ -1,0 +1,39 @@
+---
+- name: Verificar processos com alto consumo de memória RAM (>90%) no Windows
+  hosts: all
+  gather_facts: no
+  
+  tasks:
+    - name: Coletar processos via PowerShell
+      ansible.windows.win_shell: |
+        # Obtém a memória física total do sistema em Bytes
+        $TotalRam = (Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize * 1KB
+        
+        # Itera sobre os processos calculando o percentual de uso
+        $HighMemProcs = Get-Process | ForEach-Object {
+            $memPercent = ($_.WorkingSet64 / $TotalRam) * 100
+            if ($memPercent -ge 90) {
+                "PID: $($_.Id) | Nome: $($_.ProcessName) | RAM Usada: $([math]::Round($memPercent, 2))%"
+            }
+        }
+        
+        # Retorna apenas se encontrar algo
+        if ($HighMemProcs) {
+            $HighMemProcs
+        }
+      register: win_high_mem_processes
+      changed_when: false
+
+    - name: Exibir alerta e detalhes dos processos encontrados
+      debug:
+        msg: 
+          - "⚠️ ALERTA: Processos consumindo >= 90% de RAM encontrados no Windows!"
+          - "----------------------------------------------------------------------"
+          - "{{ win_high_mem_processes.stdout_lines }}"
+      # O filtro 'trim' remove espaços em branco residuais do PowerShell
+      when: win_high_mem_processes.stdout | trim != ""
+
+    - name: Confirmar status normal (Opcional)
+      debug:
+        msg: "✅ Tudo normal. Nenhum processo isolado está consumindo mais de 90% da memória."
+      when: win_high_mem_processes.stdout | trim == ""
