@@ -1,39 +1,39 @@
 ---
-- name: Verificar processos com alto consumo de memória RAM (>90%) no Windows
-  hosts: all
+- name: Diagnosticar consumo de memória RAM no Windows
+  hosts: windows
   gather_facts: no
-  
+
+  vars:
+    limiar_individual: 20   # % da RAM total que já é considerado processo "pesado"
+    top_n: 10
+
   tasks:
-    - name: Coletar processos via PowerShell
+    - name: Coletar uso de memória por processo via PowerShell
       ansible.windows.win_shell: |
-        # Obtém a memória física total do sistema em Bytes
         $TotalRam = (Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize * 1KB
-        
-        # Itera sobre os processos calculando o percentual de uso
-        $HighMemProcs = Get-Process | ForEach-Object {
+
+        $Procs = Get-Process | ForEach-Object {
             $memPercent = ($_.WorkingSet64 / $TotalRam) * 100
-            if ($memPercent -ge 90) {
-                "PID: $($_.Id) | Nome: $($_.ProcessName) | RAM Usada: $([math]::Round($memPercent, 2))%"
+            [PSCustomObject]@{
+                PID     = $_.Id
+                Nome    = $_.ProcessName
+                Percent = [math]::Round($memPercent, 2)
             }
+        } | Sort-Object Percent -Descending
+
+        Write-Output "== TOP {{ top_n }} PROCESSOS POR RAM =="
+        $Procs | Select-Object -First {{ top_n }} | ForEach-Object {
+            "PID: $($_.PID) | Nome: $($_.Nome) | RAM: $($_.Percent)%"
         }
-        
-        # Retorna apenas se encontrar algo
-        if ($HighMemProcs) {
-            $HighMemProcs
+
+        $Altos = $Procs | Where-Object { $_.Percent -ge {{ limiar_individual }} }
+        if ($Altos) {
+            Write-Output "== ALERTA: processo(s) acima de {{ limiar_individual }}% =="
+            $Altos | ForEach-Object { "PID: $($_.PID) | Nome: $($_.Nome) | RAM: $($_.Percent)%" }
         }
-      register: win_high_mem_processes
+      register: mem_check
       changed_when: false
 
-    - name: Exibir alerta e detalhes dos processos encontrados
+    - name: Exibir resultado
       debug:
-        msg: 
-          - "⚠️ ALERTA: Processos consumindo >= 90% de RAM encontrados no Windows!"
-          - "----------------------------------------------------------------------"
-          - "{{ win_high_mem_processes.stdout_lines }}"
-      # O filtro 'trim' remove espaços em branco residuais do PowerShell
-      when: win_high_mem_processes.stdout | trim != ""
-
-    - name: Confirmar status normal (Opcional)
-      debug:
-        msg: "✅ Tudo normal. Nenhum processo isolado está consumindo mais de 90% da memória."
-      when: win_high_mem_processes.stdout | trim == ""
+        msg: "{{ mem_check.stdout_lines }}"
