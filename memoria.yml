@@ -1,39 +1,45 @@
 ---
-- name: Diagnosticar consumo de memória RAM no Windows
-  hosts: all
+- name: Verificar consumo agregado de memória RAM no Windows
+  hosts: windows
   gather_facts: no
 
   vars:
-    limiar_individual: 20   # % da RAM total que já é considerado processo "pesado"
-    top_n: 10
+    limiar_alerta: 90   # % de RAM total usada para considerar crítico
 
   tasks:
-    - name: Coletar uso de memória por processo via PowerShell
+    - name: Coletar uso de memória do sistema via PowerShell
       ansible.windows.win_shell: |
-        $TotalRam = (Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize * 1KB
+        $OS = Get-CimInstance Win32_OperatingSystem
+        $TotalRamKB  = $OS.TotalVisibleMemorySize
+        $FreeRamKB   = $OS.FreePhysicalMemory
+        $UsedRamKB   = $TotalRamKB - $FreeRamKB
+        $PercentUsed = [math]::Round(($UsedRamKB / $TotalRamKB) * 100, 2)
 
-        $Procs = Get-Process | ForEach-Object {
-            $memPercent = ($_.WorkingSet64 / $TotalRam) * 100
-            [PSCustomObject]@{
-                PID     = $_.Id
-                Nome    = $_.ProcessName
-                Percent = [math]::Round($memPercent, 2)
-            }
-        } | Sort-Object Percent -Descending
+        Write-Output "RAM Total: $([math]::Round($TotalRamKB/1MB,2)) GB"
+        Write-Output "RAM Usada: $([math]::Round($UsedRamKB/1MB,2)) GB"
+        Write-Output "PERCENTUAL:$PercentUsed"
 
-        Write-Output "== TOP {{ top_n }} PROCESSOS POR RAM =="
-        $Procs | Select-Object -First {{ top_n }} | ForEach-Object {
-            "PID: $($_.PID) | Nome: $($_.Nome) | RAM: $($_.Percent)%"
-        }
-
-        $Altos = $Procs | Where-Object { $_.Percent -ge {{ limiar_individual }} }
-        if ($Altos) {
-            Write-Output "== ALERTA: processo(s) acima de {{ limiar_individual }}% =="
-            $Altos | ForEach-Object { "PID: $($_.PID) | Nome: $($_.Nome) | RAM: $($_.Percent)%" }
+        Write-Output "----------------------------------------"
+        Write-Output "Top 5 processos por consumo de RAM:"
+        Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 5 | ForEach-Object {
+            $procPercent = [math]::Round(($_.WorkingSet64 / ($TotalRamKB * 1KB)) * 100, 2)
+            "PID: $($_.Id) | Nome: $($_.ProcessName) | RAM: $procPercent%"
         }
       register: mem_check
       changed_when: false
 
-    - name: Exibir resultado
+    - name: Extrair percentual usado
+      set_fact:
+        ram_percent: "{{ mem_check.stdout_lines | select('match', '^PERCENTUAL:.*') | first | regex_replace('PERCENTUAL:', '') | float }}"
+
+    - name: Exibir alerta se acima do limiar
       debug:
-        msg: "{{ mem_check.stdout_lines }}"
+        msg:
+          - "ALERTA: RAM em {{ ram_percent }}% (limiar: {{ limiar_alerta }}%)"
+          - "{{ mem_check.stdout_lines }}"
+      when: ram_percent >= limiar_alerta
+
+    - name: Confirmar status normal
+      debug:
+        msg: "RAM em {{ ram_percent }}%, dentro do limiar de {{ limiar_alerta }}%."
+      when: ram_percent < limiar_alerta
