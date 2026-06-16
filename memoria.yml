@@ -1,6 +1,6 @@
 ---
 - name: Verificar consumo agregado de memória RAM no Windows
-  hosts: windows
+  hosts: all
   gather_facts: no
 
   vars:
