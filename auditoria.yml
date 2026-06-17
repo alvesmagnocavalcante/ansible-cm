@@ -1,0 +1,52 @@
+---
+# Playbook: Verificação de rede em hosts Windows
+# Coleta por adaptador: IP, MAC e status do DHCP (ativo = DHCP / inativo = IP estático)
+# Hostname vem direto do fact gathering (ansible_hostname)
+#
+# Pré-requisito: grupo "windows_hosts" já configurado no inventário (WinRM/conexão)
+
+- name: Verificar DHCP, IP, Hostname e MAC em hosts Windows
+  hosts: windows_hosts
+  gather_facts: true
+
+  tasks:
+
+    - name: Coletar configuração de rede via WMI
+      ansible.windows.win_shell: |
+        Get-CimInstance Win32_NetworkAdapterConfiguration |
+          Where-Object { $_.IPEnabled -eq $true } |
+          Select-Object Description, MACAddress, DHCPEnabled, DHCPServer,
+            @{Name="IPAddress"; Expression={ $_.IPAddress -join "," }} |
+          ConvertTo-Json -Compress
+      register: net_config_raw
+      changed_when: false
+
+    - name: Garantir que o stdout existe (workaround win_shell/Semaphore)
+      ansible.builtin.set_fact:
+        net_config_stdout: "{{ net_config_raw.stdout | default('') }}"
+
+    - name: Converter saída JSON
+      ansible.builtin.set_fact:
+        net_config_parsed: "{{ net_config_stdout | from_json if net_config_stdout else [] }}"
+
+    - name: Normalizar para lista (1 adaptador vem como dict, não lista)
+      ansible.builtin.set_fact:
+        net_adapters: "{{ [net_config_parsed] if net_config_parsed is mapping else net_config_parsed }}"
+
+    - name: Exibir resultado por adaptador
+      ansible.builtin.debug:
+        msg: >-
+          Hostname: {{ ansible_hostname }} |
+          Adaptador: {{ item.Description }} |
+          IP: {{ item.IPAddress }} |
+          MAC: {{ item.MACAddress }} |
+          DHCP: {{ 'Ativo' if item.DHCPEnabled else 'Inativo (IP estático)' }}
+          {{ ('| Servidor DHCP: ' + item.DHCPServer) if (item.DHCPEnabled and item.DHCPServer) else '' }}
+      loop: "{{ net_adapters }}"
+      loop_control:
+        label: "{{ item.Description }}"
+
+    - name: Resumo (algum adaptador com DHCP ativo?)
+      ansible.builtin.debug:
+        msg: >-
+          {{ ansible_hostname }}: DHCP {{ 'ATIVO' if (net_adapters | selectattr('DHCPEnabled') | list | length > 0) else 'INATIVO em todos os adaptadores' }}
