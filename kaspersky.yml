@@ -1,6 +1,6 @@
 ---
 - name: Verificar instalação do Kaspersky Endpoint Security no Windows
-  hosts: windows_servers # Altere para o grupo correspondente
+  hosts: all # Altere para o grupo correspondente
   gather_facts: false
   
   tasks:
