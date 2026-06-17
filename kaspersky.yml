@@ -1,0 +1,31 @@
+---
+- name: Verificar instalação do Kaspersky no Windows
+  hosts: all
+  gather_facts: false
+  
+  tasks:
+    - name: Buscar Kaspersky nos registros de programas instalados
+      win_shell: |
+        $paths = @(
+          "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+          "HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+        )
+        $kaspersky = Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match "Kaspersky" }
+        
+        if ($kaspersky) {
+            Write-Output "Instalado"
+        } else {
+            Write-Output "Ausente"
+        }
+      register: kaspersky_status
+      changed_when: false
+
+    - name: Alertar se o Kaspersky foi ENCONTRADO
+      debug:
+        msg: "✅ Kaspersky está INSTALADO no host {{ inventory_hostname }}."
+      when: "'Instalado' in kaspersky_status.stdout"
+
+    - name: Alertar se o Kaspersky NÃO foi encontrado
+      debug:
+        msg: "❌ Kaspersky NÃO ESTÁ instalado no host {{ inventory_hostname }}."
+      when: "'Ausente' in kaspersky_status.stdout"
