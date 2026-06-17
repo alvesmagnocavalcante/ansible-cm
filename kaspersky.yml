@@ -1,31 +1,33 @@
 ---
-- name: Verificar instalação do Kaspersky no Windows
-  hosts: all
+- name: Verificar instalação do Kaspersky Endpoint Security no Windows
+  hosts: windows_servers # Altere para o grupo correspondente
   gather_facts: false
   
   tasks:
-    - name: Buscar Kaspersky nos registros de programas instalados
+    - name: Buscar Kaspersky Endpoint Security nos registros do Windows
       win_shell: |
         $paths = @(
           "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
           "HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
         )
-        $kaspersky = Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match "Kaspersky" }
+        # Filtra especificamente pelo Endpoint Security
+        $kes = Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match "Kaspersky Endpoint Security" }
         
-        if ($kaspersky) {
-            Write-Output "Instalado"
+        if ($kes) {
+            # Retorna o nome do produto para confirmação da versão
+            Write-Output "Instalado: $($kes.DisplayName)"
         } else {
             Write-Output "Ausente"
         }
-      register: kaspersky_status
+      register: kes_status
       changed_when: false
 
-    - name: Alertar se o Kaspersky foi ENCONTRADO
+    - name: Alertar se o KES foi ENCONTRADO
       debug:
-        msg: "✅ Kaspersky está INSTALADO no host {{ inventory_hostname }}."
-      when: "'Instalado' in kaspersky_status.stdout"
+        msg: "✅ O software está INSTALADO no host {{ inventory_hostname }}. Produto: {{ kes_status.stdout_lines[0] }}"
+      when: "'Instalado' in kes_status.stdout"
 
-    - name: Alertar se o Kaspersky NÃO foi encontrado
+    - name: Alertar se o KES NÃO foi encontrado
       debug:
-        msg: "❌ Kaspersky NÃO ESTÁ instalado no host {{ inventory_hostname }}."
-      when: "'Ausente' in kaspersky_status.stdout"
+        msg: "❌ O Kaspersky Endpoint Security NÃO ESTÁ instalado no host {{ inventory_hostname }}."
+      when: "'Ausente' in kes_status.stdout"
