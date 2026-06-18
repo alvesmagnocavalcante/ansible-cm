@@ -1,6 +1,6 @@
 ---
 - name: Identificar impressoras na rede (IP, MAC e fabricante)
-  hosts: localhost
+  hosts: all
   connection: local
   gather_facts: false
   become: true  # arp-scan precisa de socket raw
