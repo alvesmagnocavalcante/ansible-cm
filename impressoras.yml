@@ -3,7 +3,6 @@
   hosts: localhost
   connection: local
   gather_facts: false
-  become: true   # necessário para arp-scan usar raw socket
 
   vars:
     rede: "10.197.3.0/24"
@@ -23,12 +22,10 @@
       - "Konica"
       - "Oki Data"
 
-    arquivo_csv: "./impressoras_{{ rede | regex_replace('[/.]', '_') }}.csv"
-
 
   tasks:
 
-    - name: Verificar se arp-scan está instalado
+    - name: Verificar se arp-scan existe
       ansible.builtin.command:
         cmd: which arp-scan
       register: arp_scan_check
@@ -44,7 +41,7 @@
       when: arp_scan_check.rc != 0
 
 
-    - name: Executar arp-scan na rede
+    - name: Executar varredura ARP
       ansible.builtin.command:
         cmd: >
           arp-scan
@@ -55,7 +52,7 @@
       changed_when: false
 
 
-    - name: Filtrar somente fabricantes de impressora
+    - name: Filtrar somente impressoras
       ansible.builtin.set_fact:
         impressoras: >-
           {{
@@ -65,24 +62,18 @@
           }}
 
 
-    - name: Mostrar impressoras encontradas
+    - name: Exibir impressoras encontradas
       ansible.builtin.debug:
-        var: impressoras
+        msg: |
+          Impressoras encontradas:
 
-
-    - name: Criar CSV
-      ansible.builtin.copy:
-        dest: "{{ arquivo_csv }}"
-        content: |
-          IP,MAC,Fabricante
           {% for linha in impressoras %}
-          {{ linha.split('\t')[0] }},{{ linha.split('\t')[1] }},{{ linha.split('\t')[2] }}
+          {{ linha }}
           {% endfor %}
 
 
-    - name: Resumo final
+    - name: Resumo
       ansible.builtin.debug:
         msg:
           - "Rede analisada: {{ rede }}"
-          - "Quantidade encontrada: {{ impressoras | length }}"
-          - "Arquivo gerado: {{ arquivo_csv }}"
+          - "Total de impressoras encontradas: {{ impressoras | length }}"
