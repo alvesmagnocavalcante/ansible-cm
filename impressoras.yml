@@ -1,15 +1,16 @@
 ---
 - name: Identificar impressoras na rede (IP, MAC e fabricante)
-  hosts: all
-  connection: all
+  hosts: localhost
+  connection: local
   gather_facts: false
-  become: true  # arp-scan precisa de socket raw
+  become: true   # necessário para arp-scan usar raw socket
 
   vars:
-    rede: "10.197.3.0/24"   # TAIBA - ajustar para CHARME quando necessário
-    # rede secundária identificada: 10.197.0.0/24 (confirmar se é VLAN separada antes de escanear)
+    rede: "10.197.3.0/24"
+
     fabricantes_impressora:
       - "Hewlett Packard"
+      - "HP"
       - "Brother"
       - "Canon"
       - "Seiko Epson"
@@ -22,36 +23,66 @@
       - "Konica"
       - "Oki Data"
 
+    arquivo_csv: "./impressoras_{{ rede | regex_replace('[/.]', '_') }}.csv"
+
+
   tasks:
-    - name: Garantir que arp-scan está instalado (Debian/Ubuntu)
+
+    - name: Verificar se arp-scan está instalado
+      ansible.builtin.command:
+        cmd: which arp-scan
+      register: arp_scan_check
+      changed_when: false
+      failed_when: false
+
+
+    - name: Instalar arp-scan (Debian/Ubuntu)
       ansible.builtin.apt:
         name: arp-scan
         state: present
         update_cache: true
+      when: arp_scan_check.rc != 0
+
 
     - name: Executar arp-scan na rede
       ansible.builtin.command:
-        cmd: "arp-scan --retry=2 --timeout=500 {{ rede }}"
+        cmd: >
+          arp-scan
+          --retry=2
+          --timeout=500
+          {{ rede }}
       register: scan
       changed_when: false
 
-    - name: Filtrar apenas linhas de fabricantes de impressora
-      ansible.builtin.set_fact:
-        impressoras: "{{ scan.stdout_lines | select('search', fabricantes_impressora | join('|')) | list }}"
 
-    - name: Exibir impressoras encontradas (IP / MAC / Fabricante)
+    - name: Filtrar somente fabricantes de impressora
+      ansible.builtin.set_fact:
+        impressoras: >-
+          {{
+            scan.stdout_lines
+            | select('search', fabricantes_impressora | join('|'))
+            | list
+          }}
+
+
+    - name: Mostrar impressoras encontradas
       ansible.builtin.debug:
         var: impressoras
 
-    - name: Salvar resultado em CSV
+
+    - name: Criar CSV
       ansible.builtin.copy:
+        dest: "{{ arquivo_csv }}"
         content: |
           IP,MAC,Fabricante
-          {% for linha in impressoras -%}
+          {% for linha in impressoras %}
           {{ linha.split('\t')[0] }},{{ linha.split('\t')[1] }},{{ linha.split('\t')[2] }}
-          {% endfor -%}
-        dest: "./impressoras_{{ rede | regex_replace('[/.]', '_') }}.csv"
+          {% endfor %}
 
-    - name: Resumo
+
+    - name: Resumo final
       ansible.builtin.debug:
-        msg: "{{ impressoras | length }} impressora(s) encontrada(s) na rede {{ rede }}"
+        msg:
+          - "Rede analisada: {{ rede }}"
+          - "Quantidade encontrada: {{ impressoras | length }}"
+          - "Arquivo gerado: {{ arquivo_csv }}"
