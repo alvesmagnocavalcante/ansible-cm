@@ -1,0 +1,57 @@
+---
+- name: Identificar impressoras na rede (IP, MAC e fabricante)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: true  # arp-scan precisa de socket raw
+
+  vars:
+    rede: "10.197.3.0/24"   # TAIBA - ajustar para CHARME quando necessário
+    # rede secundária identificada: 10.197.0.0/24 (confirmar se é VLAN separada antes de escanear)
+    fabricantes_impressora:
+      - "Hewlett Packard"
+      - "Brother"
+      - "Canon"
+      - "Seiko Epson"
+      - "Epson"
+      - "Kyocera"
+      - "Xerox"
+      - "Ricoh"
+      - "Lexmark"
+      - "Samsung"
+      - "Konica"
+      - "Oki Data"
+
+  tasks:
+    - name: Garantir que arp-scan está instalado (Debian/Ubuntu)
+      ansible.builtin.apt:
+        name: arp-scan
+        state: present
+        update_cache: true
+
+    - name: Executar arp-scan na rede
+      ansible.builtin.command:
+        cmd: "arp-scan --retry=2 --timeout=500 {{ rede }}"
+      register: scan
+      changed_when: false
+
+    - name: Filtrar apenas linhas de fabricantes de impressora
+      ansible.builtin.set_fact:
+        impressoras: "{{ scan.stdout_lines | select('search', fabricantes_impressora | join('|')) | list }}"
+
+    - name: Exibir impressoras encontradas (IP / MAC / Fabricante)
+      ansible.builtin.debug:
+        var: impressoras
+
+    - name: Salvar resultado em CSV
+      ansible.builtin.copy:
+        content: |
+          IP,MAC,Fabricante
+          {% for linha in impressoras -%}
+          {{ linha.split('\t')[0] }},{{ linha.split('\t')[1] }},{{ linha.split('\t')[2] }}
+          {% endfor -%}
+        dest: "./impressoras_{{ rede | regex_replace('[/.]', '_') }}.csv"
+
+    - name: Resumo
+      ansible.builtin.debug:
+        msg: "{{ impressoras | length }} impressora(s) encontrada(s) na rede {{ rede }}"
