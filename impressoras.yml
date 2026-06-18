@@ -1,18 +1,17 @@
 ---
-- name: Identificar impressoras na rede (IP, MAC e fabricante)
+- name: Identificar impressoras na rede Windows
   hosts: localhost
   connection: local
   gather_facts: false
 
   vars:
-    rede: "10.197.3.0/24"
+    rede: "10.197.3"
 
     fabricantes_impressora:
-      - "Hewlett Packard"
       - "HP"
+      - "Hewlett"
       - "Brother"
       - "Canon"
-      - "Seiko Epson"
       - "Epson"
       - "Kyocera"
       - "Xerox"
@@ -20,60 +19,36 @@
       - "Lexmark"
       - "Samsung"
       - "Konica"
-      - "Oki Data"
+      - "Oki"
 
 
   tasks:
 
-    - name: Verificar se arp-scan existe
-      ansible.builtin.command:
-        cmd: which arp-scan
-      register: arp_scan_check
-      changed_when: false
-      failed_when: false
-
-
-    - name: Instalar arp-scan (Debian/Ubuntu)
-      ansible.builtin.apt:
-        name: arp-scan
-        state: present
-        update_cache: true
-      when: arp_scan_check.rc != 0
-
-
-    - name: Executar varredura ARP
-      ansible.builtin.command:
-        cmd: >
-          arp-scan
-          --retry=2
-          --timeout=500
-          {{ rede }}
-      register: scan
+    - name: Executar ping para popular tabela ARP
+      ansible.windows.win_shell: |
+        1..254 | ForEach-Object {
+          ping -n 1 -w 50 {{ rede }}.$_
+        }
+      register: ping_scan
       changed_when: false
 
 
-    - name: Filtrar somente impressoras
-      ansible.builtin.set_fact:
-        impressoras: >-
-          {{
-            scan.stdout_lines
-            | select('search', fabricantes_impressora | join('|'))
-            | list
-          }}
+    - name: Consultar tabela ARP
+      ansible.windows.win_shell: |
+        arp -a
+      register: arp_result
+      changed_when: false
 
 
-    - name: Exibir impressoras encontradas
+    - name: Mostrar dispositivos encontrados
+      ansible.builtin.debug:
+        var: arp_result.stdout_lines
+
+
+    - name: Filtrar possíveis impressoras
       ansible.builtin.debug:
         msg: |
-          Impressoras encontradas:
-
-          {% for linha in impressoras %}
+          Verifique fabricantes na lista:
+          {% for linha in arp_result.stdout_lines %}
           {{ linha }}
           {% endfor %}
-
-
-    - name: Resumo
-      ansible.builtin.debug:
-        msg:
-          - "Rede analisada: {{ rede }}"
-          - "Total de impressoras encontradas: {{ impressoras | length }}"
