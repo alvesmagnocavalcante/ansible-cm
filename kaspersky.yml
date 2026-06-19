@@ -1,33 +1,42 @@
 ---
 - name: Verificar instalação do Kaspersky Endpoint Security no Windows
-  hosts: all # Altere para o grupo correspondente
+  hosts: windows_hosts
   gather_facts: false
-  
+
   tasks:
     - name: Buscar Kaspersky Endpoint Security nos registros do Windows
-      win_shell: |
+      ansible.windows.win_shell: |
+        $ErrorActionPreference = "Stop"
         $paths = @(
           "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
           "HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
         )
-        # Filtra especificamente pelo Endpoint Security
-        $kes = Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match "Kaspersky Endpoint Security" }
-        
-        if ($kes) {
-            # Retorna o nome do produto para confirmação da versão
-            Write-Output "Instalado: $($kes.DisplayName)"
-        } else {
-            Write-Output "Ausente"
+
+        # Âncora no início do nome evita falso-positivo com variantes
+        # (ex: "Kaspersky Endpoint Security Cloud Console")
+        $kes = Get-ItemProperty $paths -ErrorAction SilentlyContinue |
+          Where-Object { $_.DisplayName -match "^Kaspersky Endpoint Security( for Windows)?( \(64-bit\))?$" } |
+          Select-Object -First 1
+
+        $result = [PSCustomObject]@{
+          installed   = [bool]$kes
+          displayName = $kes.DisplayName
+          version     = $kes.DisplayVersion
         }
-      register: kes_status
+        $result | ConvertTo-Json -Compress
+      register: kes_raw
       changed_when: false
 
+    - name: Parsear resultado
+      ansible.builtin.set_fact:
+        kes_status: "{{ kes_raw.stdout | from_json }}"
+
     - name: Alertar se o KES foi ENCONTRADO
-      debug:
-        msg: "✅ O software está INSTALADO no host {{ inventory_hostname }}. Produto: {{ kes_status.stdout_lines[0] }}"
-      when: "'Instalado' in kes_status.stdout"
+      ansible.builtin.debug:
+        msg: "✅ INSTALADO em {{ inventory_hostname }} — {{ kes_status.displayName }} (v{{ kes_status.version }})"
+      when: kes_status.installed
 
     - name: Alertar se o KES NÃO foi encontrado
-      debug:
-        msg: "❌ O Kaspersky Endpoint Security NÃO ESTÁ instalado no host {{ inventory_hostname }}."
-      when: "'Ausente' in kes_status.stdout"
+      ansible.builtin.debug:
+        msg: "❌ AUSENTE em {{ inventory_hostname }}"
+      when: not kes_status.installed
