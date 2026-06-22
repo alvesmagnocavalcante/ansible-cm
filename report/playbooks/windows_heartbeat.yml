@@ -106,6 +106,48 @@
           {{ groups['heartbeat_report_hosts'] | default([]) | length }} hosts serao
           incluidos no relatorio.
 
+    - name: Inicializar classificacao dos hosts
+      ansible.builtin.set_fact:
+        heartbeat_hosts: "{{ groups['heartbeat_report_hosts'] | default([]) }}"
+        heartbeat_online_hosts: []
+        heartbeat_offline_hosts: []
+        heartbeat_alert_hosts: []
+
+    - name: Classificar hosts online e offline
+      ansible.builtin.set_fact:
+        heartbeat_online_hosts: >-
+          {{ heartbeat_online_hosts +
+             ([item] if hostvars[item].heartbeat_collection_ok | default(false) else []) }}
+        heartbeat_offline_hosts: >-
+          {{ heartbeat_offline_hosts +
+             ([] if hostvars[item].heartbeat_collection_ok | default(false) else [item]) }}
+      loop: "{{ heartbeat_hosts }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Identificar hosts com alertas
+      ansible.builtin.set_fact:
+        heartbeat_alert_hosts: "{{ heartbeat_alert_hosts + [item] }}"
+      loop: "{{ heartbeat_online_hosts }}"
+      loop_control:
+        label: "{{ item }}"
+      vars:
+        current_data: "{{ hostvars[item].heartbeat_data }}"
+      when: >-
+        (current_data.cpu_percent | float >= cpu_warning_percent) or
+        (current_data.memory_used_percent | float >= memory_warning_percent) or
+        (current_data.stopped_automatic_services | int > 0) or
+        (current_data.disks | default([]) |
+         selectattr('free_percent', 'le', disk_warning_percent) | list | length > 0)
+
+    - name: Exibir resumo antes do envio
+      ansible.builtin.debug:
+        msg: >-
+          Total={{ heartbeat_hosts | length }},
+          online={{ heartbeat_online_hosts | length }},
+          offline={{ heartbeat_offline_hosts | length }},
+          alertas={{ heartbeat_alert_hosts | length }}.
+
     - name: Gerar relatorio HTML somente em memoria
       ansible.builtin.set_fact:
         heartbeat_report_html: >-
