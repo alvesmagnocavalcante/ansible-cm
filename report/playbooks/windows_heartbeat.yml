@@ -5,12 +5,13 @@
   ignore_unreachable: true
 
   tasks:
-    - name: Registrar lista exata de hosts monitorados no controlador
-      ansible.builtin.set_fact:
-        heartbeat_monitored_hosts: "{{ ansible_play_hosts_all }}"
-      delegate_to: localhost
-      delegate_facts: true
+    - name: Criar grupo de relatorio somente na memoria do controlador
+      ansible.builtin.add_host:
+        name: "{{ item }}"
+        groups: heartbeat_report_hosts
+      loop: "{{ ansible_play_hosts_all }}"
       run_once: true
+      changed_when: false
 
     # O modulo raw executa diretamente pela conexao WinRM e nao transfere uma
     # biblioteca de modulo Ansible ao host remoto.
@@ -91,6 +92,20 @@
     - ../group_vars/all.yml
 
   tasks:
+    - name: Validar que existem hosts no relatorio
+      ansible.builtin.assert:
+        that:
+          - groups['heartbeat_report_hosts'] | default([]) | length > 0
+        fail_msg: >-
+          Nenhum host foi registrado para o relatorio. Confira o grupo definido em
+          heartbeat_target_group e o inventario selecionado no Semaphore.
+
+    - name: Informar quantidade de hosts encontrados
+      ansible.builtin.debug:
+        msg: >-
+          {{ groups['heartbeat_report_hosts'] | default([]) | length }} hosts serao
+          incluidos no relatorio.
+
     - name: Gerar relatorio HTML somente em memoria
       ansible.builtin.set_fact:
         heartbeat_report_html: >-
