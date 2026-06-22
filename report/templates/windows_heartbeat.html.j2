@@ -17,29 +17,15 @@
   </style>
 </head>
 <body>
-{% set ns = namespace(online=0, offline=0, alerts=0) %}
-{% for host in groups['windows'] | default([]) %}
-  {% if hostvars[host].heartbeat_collection_ok | default(false) %}
-    {% set ns.online = ns.online + 1 %}
-    {% set d = hostvars[host].heartbeat_data %}
-    {% set alert = namespace(found=(d.cpu_percent | float >= cpu_warning_percent) or (d.memory_used_percent | float >= memory_warning_percent)) %}
-    {% for disk in d.disks | default([]) %}
-      {% if disk.free_percent | float <= disk_warning_percent %}{% set alert.found = true %}{% endif %}
-    {% endfor %}
-    {% if alert.found or d.stopped_automatic_services | int > 0 %}{% set ns.alerts = ns.alerts + 1 %}{% endif %}
-  {% else %}
-    {% set ns.offline = ns.offline + 1 %}
-  {% endif %}
-{% endfor %}
   <h1>Heartbeat dos servidores Windows</h1>
-  <div class="muted">Gerado em {{ ansible_date_time.date }} {{ ansible_date_time.time }} (controlador)</div>
+  <div class="muted">Gerado em {{ ansible_facts['date_time']['date'] }} {{ ansible_facts['date_time']['time'] }} (controlador)</div>
   <div class="summary">
-    <div class="card"><span class="ok">{{ ns.online }}</span><br>online</div>
-    <div class="card"><span class="critical">{{ ns.offline }}</span><br>offline/sem coleta</div>
-    <div class="card"><span class="warning">{{ ns.alerts }}</span><br>com alertas</div>
+    <div class="card"><span class="ok">{{ heartbeat_online_hosts | length }}</span><br>online</div>
+    <div class="card"><span class="critical">{{ heartbeat_offline_hosts | length }}</span><br>offline/sem coleta</div>
+    <div class="card"><span class="warning">{{ heartbeat_alert_hosts | length }}</span><br>com alertas</div>
   </div>
 
-{% for host in groups['windows'] | default([]) %}
+{% for host in heartbeat_hosts %}
   {% if hostvars[host].heartbeat_collection_ok | default(false) %}
     {% set d = hostvars[host].heartbeat_data %}
     <h2>{{ d.hostname | default(host) }} <span class="ok">ONLINE</span></h2>
