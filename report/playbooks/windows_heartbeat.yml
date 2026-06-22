@@ -1,23 +1,28 @@
 ---
 - name: Coletar saude dos hosts Windows
-  hosts: windows
+  hosts: "{{ heartbeat_target_group | default('windows_hosts') }}"
   gather_facts: false
   ignore_unreachable: true
 
   tasks:
-    - name: Verificar conectividade WinRM
-      ansible.windows.win_ping:
+    # O modulo raw executa diretamente pela conexao WinRM e nao transfere uma
+    # biblioteca de modulo Ansible ao host remoto.
+    - name: Verificar conectividade WinRM sem copiar arquivos
+      ansible.builtin.raw: "Write-Output '__HEARTBEAT_OK__'"
       register: heartbeat_ping
       changed_when: false
       failed_when: false
 
     - name: Registrar estado de conectividade
       ansible.builtin.set_fact:
-        heartbeat_reachable: "{{ heartbeat_ping.ping | default('') == 'pong' }}"
+        heartbeat_reachable: >-
+          {{ '__HEARTBEAT_OK__' in (heartbeat_ping.stdout | default('')) }}
+      delegate_to: localhost
 
-    - name: Coletar metricas com PowerShell e CIM
-      ansible.windows.win_shell: |
+    - name: Consultar metricas somente leitura via PowerShell e CIM
+      ansible.builtin.raw: |
         $ErrorActionPreference = 'Stop'
+        $ProgressPreference = 'SilentlyContinue'
         $os = Get-CimInstance Win32_OperatingSystem
         $computer = Get-CimInstance Win32_ComputerSystem
         $cpuSamples = Get-CimInstance Win32_Processor | Select-Object -ExpandProperty LoadPercentage
@@ -69,6 +74,7 @@
                  (heartbeat_raw.rc | default(1) == 0) and
                  (heartbeat_raw.stdout | default('') | length > 0))
              else {} }}
+      delegate_to: localhost
 
 - name: Gerar e enviar relatorio consolidado
   hosts: localhost
@@ -124,4 +130,3 @@
     - name: Informar local do relatorio
       ansible.builtin.debug:
         msg: "Relatorio salvo em {{ heartbeat_report_file }}"
-
