@@ -5,6 +5,13 @@
   ignore_unreachable: true
 
   tasks:
+    - name: Registrar lista exata de hosts monitorados no controlador
+      ansible.builtin.set_fact:
+        heartbeat_monitored_hosts: "{{ ansible_play_hosts_all }}"
+      delegate_to: localhost
+      delegate_facts: true
+      run_once: true
+
     # O modulo raw executa diretamente pela conexao WinRM e nao transfere uma
     # biblioteca de modulo Ansible ao host remoto.
     - name: Verificar conectividade WinRM sem copiar arquivos
@@ -110,7 +117,7 @@
         to: "{{ email_to.split(',') | map('trim') | list }}"
         subject: >-
           {{ email_subject }} -
-          {{ ansible_date_time.date }}
+          {{ ansible_facts['date_time']['date'] }}
         subtype: html
         body: "{{ heartbeat_report_html }}"
       no_log: true
