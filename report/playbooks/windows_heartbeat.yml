@@ -80,24 +80,15 @@
   hosts: localhost
   connection: local
   gather_facts: true
+  vars_files:
+    - ../group_vars/all.yml
 
   tasks:
-    - name: Criar diretorio de relatorios
-      ansible.builtin.file:
-        path: "{{ report_directory }}"
-        state: directory
-        mode: "0750"
-
-    - name: Definir nome do relatorio
+    - name: Gerar relatorio HTML somente em memoria
       ansible.builtin.set_fact:
-        heartbeat_report_file: >-
-          {{ report_directory }}/windows-heartbeat-{{ ansible_date_time.iso8601_basic_short }}.html
-
-    - name: Gerar relatorio HTML
-      ansible.builtin.template:
-        src: ../templates/windows_heartbeat.html.j2
-        dest: "{{ heartbeat_report_file }}"
-        mode: "0640"
+        heartbeat_report_html: >-
+          {{ lookup('ansible.builtin.template',
+                    playbook_dir + '/../templates/windows_heartbeat.html.j2') }}
 
     - name: Validar configuracao de e-mail
       ansible.builtin.assert:
@@ -121,12 +112,12 @@
           {{ email_subject }} -
           {{ ansible_date_time.date }}
         subtype: html
-        body: "{{ lookup('ansible.builtin.file', heartbeat_report_file) }}"
-        attach:
-          - "{{ heartbeat_report_file }}"
+        body: "{{ heartbeat_report_html }}"
       no_log: true
       when: send_email | bool
 
-    - name: Informar local do relatorio
+    - name: Informar conclusao do relatorio
       ansible.builtin.debug:
-        msg: "Relatorio salvo em {{ heartbeat_report_file }}"
+        msg: >-
+          Relatorio processado em memoria{{ ' e enviado por e-mail' if send_email | bool
+          else ' (envio de e-mail desabilitado)' }}. Nenhum arquivo foi salvo.
