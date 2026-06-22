@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: Arial, sans-serif; color: #20242a; margin: 24px; }
+    h1 { color: #183153; margin-bottom: 4px; }
+    .muted { color: #667085; }
+    .summary { display: flex; gap: 12px; margin: 22px 0; }
+    .card { border: 1px solid #d9dee7; border-radius: 8px; padding: 12px 18px; }
+    .ok { color: #067647; font-weight: bold; }
+    .warning { color: #b54708; font-weight: bold; }
+    .critical { color: #b42318; font-weight: bold; }
+    table { border-collapse: collapse; width: 100%; margin: 10px 0 28px; }
+    th, td { border: 1px solid #d9dee7; padding: 8px; text-align: left; }
+    th { background: #f2f4f7; }
+  </style>
+</head>
+<body>
+{% set ns = namespace(online=0, offline=0, alerts=0) %}
+{% for host in groups['windows'] | default([]) %}
+  {% if hostvars[host].heartbeat_collection_ok | default(false) %}
+    {% set ns.online = ns.online + 1 %}
+    {% set d = hostvars[host].heartbeat_data %}
+    {% set alert = namespace(found=(d.cpu_percent | float >= cpu_warning_percent) or (d.memory_used_percent | float >= memory_warning_percent)) %}
+    {% for disk in d.disks | default([]) %}
+      {% if disk.free_percent | float <= disk_warning_percent %}{% set alert.found = true %}{% endif %}
+    {% endfor %}
+    {% if alert.found or d.stopped_automatic_services | int > 0 %}{% set ns.alerts = ns.alerts + 1 %}{% endif %}
+  {% else %}
+    {% set ns.offline = ns.offline + 1 %}
+  {% endif %}
+{% endfor %}
+  <h1>Heartbeat dos servidores Windows</h1>
+  <div class="muted">Gerado em {{ ansible_date_time.date }} {{ ansible_date_time.time }} (controlador)</div>
+  <div class="summary">
+    <div class="card"><span class="ok">{{ ns.online }}</span><br>online</div>
+    <div class="card"><span class="critical">{{ ns.offline }}</span><br>offline/sem coleta</div>
+    <div class="card"><span class="warning">{{ ns.alerts }}</span><br>com alertas</div>
+  </div>
+
+{% for host in groups['windows'] | default([]) %}
+  {% if hostvars[host].heartbeat_collection_ok | default(false) %}
+    {% set d = hostvars[host].heartbeat_data %}
+    <h2>{{ d.hostname | default(host) }} <span class="ok">ONLINE</span></h2>
+    <table>
+      <tr><th>Endereco</th><td>{{ hostvars[host].ansible_host | default(host) }}</td><th>Sistema</th><td>{{ d.os }} {{ d.os_version }}</td></tr>
+      <tr><th>Fabricante/modelo</th><td>{{ d.manufacturer }} / {{ d.model }}</td><th>Uptime</th><td>{{ d.uptime_days }} dias (boot: {{ d.last_boot }})</td></tr>
+      <tr><th>CPU</th><td class="{{ 'critical' if d.cpu_percent | float >= cpu_warning_percent else 'ok' }}">{{ d.cpu_percent }}%</td><th>Memoria</th><td class="{{ 'critical' if d.memory_used_percent | float >= memory_warning_percent else 'ok' }}">{{ d.memory_used_percent }}% de {{ d.memory_total_gb }} GB</td></tr>
+      <tr><th>Servicos automaticos parados</th><td class="{{ 'warning' if d.stopped_automatic_services | int > 0 else 'ok' }}">{{ d.stopped_automatic_services }}</td><th>Coletado em</th><td>{{ d.collected_at }}</td></tr>
+    </table>
+    <table>
+      <tr><th>Disco</th><th>Total</th><th>Livre</th><th>Livre (%)</th></tr>
+      {% for disk in d.disks | default([]) %}
+      <tr><td>{{ disk.drive }}</td><td>{{ disk.size_gb }} GB</td><td>{{ disk.free_gb }} GB</td><td class="{{ 'critical' if disk.free_percent | float <= disk_warning_percent else 'ok' }}">{{ disk.free_percent }}%</td></tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <h2>{{ host }} <span class="critical">OFFLINE OU ERRO NA COLETA</span></h2>
+    <p>Endereco: {{ hostvars[host].ansible_host | default(host) }}. Verifique rede, WinRM e credenciais.</p>
+  {% endif %}
+{% endfor %}
+</body>
+</html>

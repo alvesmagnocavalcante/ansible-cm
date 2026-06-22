@@ -1,0 +1,21 @@
+---
+# Credenciais devem ser fornecidas por variaveis de ambiente ou Ansible Vault.
+smtp_host: "{{ lookup('env', 'HEARTBEAT_SMTP_HOST') }}"
+smtp_port: "{{ lookup('env', 'HEARTBEAT_SMTP_PORT') | default('587', true) | int }}"
+smtp_user: "{{ lookup('env', 'HEARTBEAT_SMTP_USER') }}"
+smtp_password: "{{ lookup('env', 'HEARTBEAT_SMTP_PASSWORD') }}"
+smtp_secure: starttls
+
+email_from: "{{ lookup('env', 'HEARTBEAT_EMAIL_FROM') }}"
+email_to: "{{ lookup('env', 'HEARTBEAT_EMAIL_TO') }}"
+email_subject: "Heartbeat dos servidores Windows"
+
+# Limites usados para destacar alertas no relatorio.
+disk_warning_percent: 15
+memory_warning_percent: 90
+cpu_warning_percent: 90
+
+# Use false para testar apenas a geracao do relatorio.
+send_email: true
+report_directory: "{{ playbook_dir }}/reports"
+

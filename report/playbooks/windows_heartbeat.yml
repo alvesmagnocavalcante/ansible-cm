@@ -1,0 +1,127 @@
+---
+- name: Coletar saude dos hosts Windows
+  hosts: windows
+  gather_facts: false
+  ignore_unreachable: true
+
+  tasks:
+    - name: Verificar conectividade WinRM
+      ansible.windows.win_ping:
+      register: heartbeat_ping
+      changed_when: false
+      failed_when: false
+
+    - name: Registrar estado de conectividade
+      ansible.builtin.set_fact:
+        heartbeat_reachable: "{{ heartbeat_ping.ping | default('') == 'pong' }}"
+
+    - name: Coletar metricas com PowerShell e CIM
+      ansible.windows.win_shell: |
+        $ErrorActionPreference = 'Stop'
+        $os = Get-CimInstance Win32_OperatingSystem
+        $computer = Get-CimInstance Win32_ComputerSystem
+        $cpuSamples = Get-CimInstance Win32_Processor | Select-Object -ExpandProperty LoadPercentage
+        $cpu = [math]::Round(($cpuSamples | Measure-Object -Average).Average, 1)
+        $memoryUsed = [math]::Round((1 - ($os.FreePhysicalMemory / $os.TotalVisibleMemorySize)) * 100, 1)
+        $uptime = (Get-Date) - $os.LastBootUpTime
+        $disks = @(
+          Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object {
+            [pscustomobject]@{
+              drive = $_.DeviceID
+              size_gb = [math]::Round($_.Size / 1GB, 1)
+              free_gb = [math]::Round($_.FreeSpace / 1GB, 1)
+              free_percent = if ($_.Size) { [math]::Round(($_.FreeSpace / $_.Size) * 100, 1) } else { 0 }
+            }
+          }
+        )
+        $stoppedAutomatic = @(Get-CimInstance Win32_Service | Where-Object {
+          $_.StartMode -eq 'Auto' -and $_.State -ne 'Running'
+        }).Count
+        [pscustomobject]@{
+          hostname = $env:COMPUTERNAME
+          os = $os.Caption
+          os_version = $os.Version
+          manufacturer = $computer.Manufacturer
+          model = $computer.Model
+          cpu_percent = $cpu
+          memory_total_gb = [math]::Round($os.TotalVisibleMemorySize / 1MB, 1)
+          memory_used_percent = $memoryUsed
+          uptime_days = [math]::Round($uptime.TotalDays, 1)
+          last_boot = $os.LastBootUpTime.ToString('yyyy-MM-dd HH:mm:ss')
+          stopped_automatic_services = $stoppedAutomatic
+          disks = $disks
+          collected_at = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+        } | ConvertTo-Json -Depth 5 -Compress
+      register: heartbeat_raw
+      changed_when: false
+      failed_when: false
+      when: heartbeat_reachable
+
+    - name: Normalizar dados coletados
+      ansible.builtin.set_fact:
+        heartbeat_collection_ok: >-
+          {{ heartbeat_reachable and
+             (heartbeat_raw.rc | default(1) == 0) and
+             (heartbeat_raw.stdout | default('') | length > 0) }}
+        heartbeat_data: >-
+          {{ (heartbeat_raw.stdout | from_json)
+             if (heartbeat_reachable and
+                 (heartbeat_raw.rc | default(1) == 0) and
+                 (heartbeat_raw.stdout | default('') | length > 0))
+             else {} }}
+
+- name: Gerar e enviar relatorio consolidado
+  hosts: localhost
+  connection: local
+  gather_facts: true
+
+  tasks:
+    - name: Criar diretorio de relatorios
+      ansible.builtin.file:
+        path: "{{ report_directory }}"
+        state: directory
+        mode: "0750"
+
+    - name: Definir nome do relatorio
+      ansible.builtin.set_fact:
+        heartbeat_report_file: >-
+          {{ report_directory }}/windows-heartbeat-{{ ansible_date_time.iso8601_basic_short }}.html
+
+    - name: Gerar relatorio HTML
+      ansible.builtin.template:
+        src: ../templates/windows_heartbeat.html.j2
+        dest: "{{ heartbeat_report_file }}"
+        mode: "0640"
+
+    - name: Validar configuracao de e-mail
+      ansible.builtin.assert:
+        that:
+          - smtp_host | length > 0
+          - email_from | length > 0
+          - email_to | length > 0
+        fail_msg: Configure HEARTBEAT_SMTP_HOST, HEARTBEAT_EMAIL_FROM e HEARTBEAT_EMAIL_TO.
+      when: send_email | bool
+
+    - name: Enviar heartbeat por e-mail
+      community.general.mail:
+        host: "{{ smtp_host }}"
+        port: "{{ smtp_port }}"
+        username: "{{ smtp_user if smtp_user | length > 0 else omit }}"
+        password: "{{ smtp_password if smtp_password | length > 0 else omit }}"
+        secure: "{{ smtp_secure }}"
+        from: "{{ email_from }}"
+        to: "{{ email_to.split(',') | map('trim') | list }}"
+        subject: >-
+          {{ email_subject }} -
+          {{ ansible_date_time.date }}
+        subtype: html
+        body: "{{ lookup('ansible.builtin.file', heartbeat_report_file) }}"
+        attach:
+          - "{{ heartbeat_report_file }}"
+      no_log: true
+      when: send_email | bool
+
+    - name: Informar local do relatorio
+      ansible.builtin.debug:
+        msg: "Relatorio salvo em {{ heartbeat_report_file }}"
+
