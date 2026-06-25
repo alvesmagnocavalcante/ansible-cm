@@ -88,6 +88,8 @@
           "ServerActive" = "{{ zabbix_server_active }}"
           "Hostname" = "{{ zabbix_hostname }}"
           "ListenPort" = "{{ zabbix_agent_port }}"
+          "TLSConnect" = "unencrypted"
+          "TLSAccept" = "unencrypted"
         }
 
         if (-not (Test-Path $conf)) {
@@ -169,7 +171,9 @@
           "Server={{ zabbix_server_passive }}",
           "ServerActive={{ zabbix_server_active }}",
           "Hostname={{ zabbix_hostname }}",
-          "ListenPort={{ zabbix_agent_port }}"
+          "ListenPort={{ zabbix_agent_port }}",
+          "TLSConnect=unencrypted",
+          "TLSAccept=unencrypted"
         )
 
         foreach ($line in $expected) {
