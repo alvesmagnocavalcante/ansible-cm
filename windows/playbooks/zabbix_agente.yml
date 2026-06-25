@@ -5,7 +5,7 @@
 
   vars:
     zabbix_server_passive: "10.197.3.2,10.197.1.1,10.212.134.203,10.212.0.0/16"
-    zabbix_server_active: ""
+    zabbix_server_active: "10.197.3.2:10052"
     zabbix_agent_port: 10050
     zabbix_hostname: "{{ inventory_hostname }}"
     zabbix_msi_url: "https://cdn.zabbix.com/zabbix/binaries/stable/7.4/7.4.11/zabbix_agent2-7.4.11-windows-amd64-openssl.msi"
@@ -89,7 +89,6 @@
           "ServerActive" = "{{ zabbix_server_active }}"
           "Hostname" = "{{ zabbix_hostname }}"
           "ListenPort" = "{{ zabbix_agent_port }}"
-          "ListenIP" = "0.0.0.0"
           "TLSConnect" = "unencrypted"
           "TLSAccept" = "unencrypted"
         }
@@ -168,18 +167,12 @@
           throw "Porta {{ zabbix_agent_port }} nao esta em LISTEN"
         }
 
-        $listenAddresses = @($listener | Select-Object -ExpandProperty LocalAddress -Unique)
-        if ($listenAddresses -notcontains "0.0.0.0" -and $listenAddresses -notcontains "::") {
-          throw "Porta {{ zabbix_agent_port }} esta em LISTEN apenas em: $($listenAddresses -join ', ')"
-        }
-
         $conf = Get-Content -LiteralPath "{{ zabbix_conf }}"
         $expected = @(
           "Server={{ zabbix_server_passive }}",
           "ServerActive={{ zabbix_server_active }}",
           "Hostname={{ zabbix_hostname }}",
           "ListenPort={{ zabbix_agent_port }}",
-          "ListenIP=0.0.0.0",
           "TLSConnect=unencrypted",
           "TLSAccept=unencrypted"
         )
@@ -191,9 +184,8 @@
         }
 
         Write-Output "OK - {{ zabbix_hostname }} com Agent 2 em {{ zabbix_agent_port }}"
-        Write-Output "ListenAddress=$($listenAddresses -join ',')"
         Write-Output "Server={{ zabbix_server_passive }}"
-        Write-Output "ServerActive desabilitado"
+        Write-Output "ServerActive={{ zabbix_server_active }}"
       register: zabbix_validation
 
     - name: Resultado final
