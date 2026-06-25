@@ -155,7 +155,7 @@
     - name: Abrir porta 10050 no firewall do Windows
       community.windows.win_firewall_rule:
         name: "Zabbix Agent 2"
-        localport: 10050
+        localport: 10052
         protocol: tcp
         direction: in
         action: allow
