@@ -89,6 +89,7 @@
           "ServerActive" = "{{ zabbix_server_active }}"
           "Hostname" = "{{ zabbix_hostname }}"
           "ListenPort" = "{{ zabbix_agent_port }}"
+          "ListenIP" = "0.0.0.0"
           "TLSConnect" = "unencrypted"
           "TLSAccept" = "unencrypted"
         }
@@ -167,12 +168,18 @@
           throw "Porta {{ zabbix_agent_port }} nao esta em LISTEN"
         }
 
+        $listenAddresses = @($listener | Select-Object -ExpandProperty LocalAddress -Unique)
+        if ($listenAddresses -notcontains "0.0.0.0" -and $listenAddresses -notcontains "::") {
+          throw "Porta {{ zabbix_agent_port }} esta em LISTEN apenas em: $($listenAddresses -join ', ')"
+        }
+
         $conf = Get-Content -LiteralPath "{{ zabbix_conf }}"
         $expected = @(
           "Server={{ zabbix_server_passive }}",
           "ServerActive={{ zabbix_server_active }}",
           "Hostname={{ zabbix_hostname }}",
           "ListenPort={{ zabbix_agent_port }}",
+          "ListenIP=0.0.0.0",
           "TLSConnect=unencrypted",
           "TLSAccept=unencrypted"
         )
@@ -184,6 +191,7 @@
         }
 
         Write-Output "OK - {{ zabbix_hostname }} com Agent 2 em {{ zabbix_agent_port }}"
+        Write-Output "ListenAddress=$($listenAddresses -join ',')"
         Write-Output "Server={{ zabbix_server_passive }}"
         Write-Output "ServerActive={{ zabbix_server_active }}"
       register: zabbix_validation
