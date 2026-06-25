@@ -5,7 +5,7 @@
 
   vars:
     zabbix_server_passive: "10.197.3.2,10.197.1.1,10.212.134.203,10.212.0.0/16"
-    zabbix_server_active: "10.197.3.2:10052"
+    zabbix_server_active: ""
     zabbix_agent_port: 10050
     zabbix_hostname: "{{ inventory_hostname }}"
     zabbix_msi_url: "https://cdn.zabbix.com/zabbix/binaries/stable/7.4/7.4.11/zabbix_agent2-7.4.11-windows-amd64-openssl.msi"
@@ -193,7 +193,7 @@
         Write-Output "OK - {{ zabbix_hostname }} com Agent 2 em {{ zabbix_agent_port }}"
         Write-Output "ListenAddress=$($listenAddresses -join ',')"
         Write-Output "Server={{ zabbix_server_passive }}"
-        Write-Output "ServerActive={{ zabbix_server_active }}"
+        Write-Output "ServerActive desabilitado"
       register: zabbix_validation
 
     - name: Resultado final
