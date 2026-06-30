@@ -13,8 +13,6 @@
       run_once: true
       changed_when: false
 
-    # O modulo raw executa diretamente pela conexao WinRM e nao transfere uma
-    # biblioteca de modulo Ansible ao host remoto.
     - name: Verificar conectividade WinRM sem copiar arquivos
       ansible.builtin.raw: "Write-Output '__HEARTBEAT_OK__'"
       register: heartbeat_ping
@@ -31,12 +29,14 @@
       ansible.builtin.raw: |
         $ErrorActionPreference = 'Stop'
         $ProgressPreference = 'SilentlyContinue'
+
         $os = Get-CimInstance Win32_OperatingSystem
         $computer = Get-CimInstance Win32_ComputerSystem
         $cpuSamples = Get-CimInstance Win32_Processor | Select-Object -ExpandProperty LoadPercentage
         $cpu = [math]::Round(($cpuSamples | Measure-Object -Average).Average, 1)
         $memoryUsed = [math]::Round((1 - ($os.FreePhysicalMemory / $os.TotalVisibleMemorySize)) * 100, 1)
         $uptime = (Get-Date) - $os.LastBootUpTime
+
         $disks = @(
           Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object {
             [pscustomobject]@{
@@ -47,19 +47,21 @@
             }
           }
         )
+
         $stoppedAutomatic = @(Get-CimInstance Win32_Service | Where-Object {
           $_.StartMode -eq 'Auto' -and $_.State -ne 'Running'
         }).Count
 
-        # Status do Windows Defender (somente leitura, via modulo Defender)
         $defenderEnabled = $null
         $defenderRealtime = $null
         $defenderSignatureAge = $null
         $defenderError = $null
+
         try {
           $defender = Get-MpComputerStatus
           $defenderEnabled = [bool]$defender.AntivirusEnabled
           $defenderRealtime = [bool]$defender.RealTimeProtectionEnabled
+
           if ($defender.AntivirusSignatureLastUpdated) {
             $defenderSignatureAge = [math]::Round(((Get-Date) - $defender.AntivirusSignatureLastUpdated).TotalDays, 1)
           }
@@ -154,13 +156,13 @@
       loop_control:
         label: "{{ item }}"
       vars:
-        current_data: "{{ hostvars[item].heartbeat_data }}"
+        current_data: "{{ hostvars[item].heartbeat_data | default({}) }}"
       when: >-
-        (current_data.cpu_percent | float >= cpu_warning_percent) or
-        (current_data.memory_used_percent | float >= memory_warning_percent) or
-        (current_data.stopped_automatic_services | int > 0) or
-        (current_data.disks | default([]) |
-         selectattr('free_percent', 'le', disk_warning_percent) | list | length > 0)
+        ((current_data.cpu_percent | default(0, true) | float) >= (cpu_warning_percent | float)) or
+        ((current_data.memory_used_percent | default(0, true) | float) >= (memory_warning_percent | float)) or
+        ((current_data.stopped_automatic_services | default(0, true) | int) > 0) or
+        ((current_data.disks | default([], true) |
+          selectattr('free_percent', 'le', disk_warning_percent) | list | length) > 0)
 
     - name: Identificar hosts com Windows Defender desativado
       ansible.builtin.set_fact:
@@ -169,11 +171,11 @@
       loop_control:
         label: "{{ item }}"
       vars:
-        current_data: "{{ hostvars[item].heartbeat_data }}"
+        current_data: "{{ hostvars[item].heartbeat_data | default({}) }}"
       when: >-
-        (current_data.defender_enabled is defined and current_data.defender_enabled == false) or
-        (current_data.defender_realtime_enabled is defined and current_data.defender_realtime_enabled == false) or
-        (current_data.defender_error is defined and current_data.defender_error)
+        ((current_data.defender_enabled | default(true, true)) == false) or
+        ((current_data.defender_realtime_enabled | default(true, true)) == false) or
+        ((current_data.defender_error | default('', true) | string | length) > 0)
 
     - name: Exibir resumo antes do envio
       ansible.builtin.debug:
