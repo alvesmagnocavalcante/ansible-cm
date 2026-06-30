@@ -56,6 +56,7 @@
         $defenderRealtime = $null
         $defenderSignatureAge = $null
         $defenderError = $null
+        $defenderStatus = "Indisponivel"
 
         try {
           $defender = Get-MpComputerStatus
@@ -65,8 +66,48 @@
           if ($defender.AntivirusSignatureLastUpdated) {
             $defenderSignatureAge = [math]::Round(((Get-Date) - $defender.AntivirusSignatureLastUpdated).TotalDays, 1)
           }
+
+          if ($defenderEnabled -and $defenderRealtime) {
+            $defenderStatus = "Ativo"
+          } elseif ($defenderEnabled -and -not $defenderRealtime) {
+            $defenderStatus = "Antivirus ativo, tempo real desativado"
+          } else {
+            $defenderStatus = "Desativado"
+          }
         } catch {
           $defenderError = $_.Exception.Message
+          $defenderStatus = "Erro ao consultar"
+        }
+
+        $firewallProfiles = @()
+        $firewallAllEnabled = $null
+        $firewallStatus = "Indisponivel"
+        $firewallError = $null
+
+        try {
+          $firewallProfiles = @(
+            Get-NetFirewallProfile | ForEach-Object {
+              [pscustomobject]@{
+                name = $_.Name.ToString()
+                enabled = [bool]$_.Enabled
+                default_inbound_action = $_.DefaultInboundAction.ToString()
+                default_outbound_action = $_.DefaultOutboundAction.ToString()
+              }
+            }
+          )
+
+          if ($firewallProfiles.Count -gt 0) {
+            $disabledProfiles = @($firewallProfiles | Where-Object { -not $_.enabled })
+            $firewallAllEnabled = ($disabledProfiles.Count -eq 0)
+            if ($firewallAllEnabled) {
+              $firewallStatus = "Ativo"
+            } else {
+              $firewallStatus = "Desativado em: " + (($disabledProfiles | Select-Object -ExpandProperty name) -join ", ")
+            }
+          }
+        } catch {
+          $firewallError = $_.Exception.Message
+          $firewallStatus = "Erro ao consultar"
         }
 
         [pscustomobject]@{
@@ -84,8 +125,13 @@
           disks = $disks
           defender_enabled = $defenderEnabled
           defender_realtime_enabled = $defenderRealtime
+          defender_status = $defenderStatus
           defender_signature_age_days = $defenderSignatureAge
           defender_error = $defenderError
+          firewall_all_enabled = $firewallAllEnabled
+          firewall_status = $firewallStatus
+          firewall_profiles = $firewallProfiles
+          firewall_error = $firewallError
           collected_at = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
         } | ConvertTo-Json -Depth 5 -Compress
       register: heartbeat_raw
@@ -176,6 +222,18 @@
         ((current_data.defender_enabled | default(true, true)) == false) or
         ((current_data.defender_realtime_enabled | default(true, true)) == false) or
         ((current_data.defender_error | default('', true) | string | length) > 0)
+
+    - name: Exibir status de Defender e Firewall
+      ansible.builtin.debug:
+        msg: >-
+          {{ item }}:
+          Defender={{ current_data.defender_status | default('Indisponivel', true) }};
+          Firewall={{ current_data.firewall_status | default('Indisponivel', true) }}
+      loop: "{{ heartbeat_online_hosts }}"
+      loop_control:
+        label: "{{ item }}"
+      vars:
+        current_data: "{{ hostvars[item].heartbeat_data | default({}) }}"
 
     - name: Exibir resumo antes do envio
       ansible.builtin.debug:
