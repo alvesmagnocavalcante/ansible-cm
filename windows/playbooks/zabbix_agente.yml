@@ -4,19 +4,25 @@
   gather_facts: false
 
   vars:
-    zabbix_server_passive: "10.197.3.2,10.197.1.1,10.212.134.203,10.212.0.0/16"
-    zabbix_server_active: "10.197.3.2:10052"
+    # IP do Zabbix Server visto pelos hosts Windows pela VPN.
+    # Nao use 172.31.240.254 aqui, pois esse IP existe apenas dentro do Docker.
+    zabbix_server_ip: "10.212.134.202"
+    zabbix_server_port: 10051
+    zabbix_server_passive: "{{ zabbix_server_ip }}"
+    zabbix_server_active: "{{ zabbix_server_ip }}:{{ zabbix_server_port }}"
     zabbix_agent_port: 10050
     zabbix_hostname: "{{ inventory_hostname }}"
+
     zabbix_msi_url: "https://cdn.zabbix.com/zabbix/binaries/stable/7.4/7.4.11/zabbix_agent2-7.4.11-windows-amd64-openssl.msi"
     zabbix_temp_dir: "C:\\Temp"
     zabbix_msi_dest: "C:\\Temp\\zabbix_agent2.msi"
     zabbix_install_dir: "C:\\Program Files\\Zabbix Agent 2"
-    zabbix_agent2_exe: "C:\\Program Files\\Zabbix Agent 2\\zabbix_agent2.exe"
-    zabbix_conf: "C:\\Program Files\\Zabbix Agent 2\\zabbix_agent2.conf"
-    zabbix_log: "C:\\Program Files\\Zabbix Agent 2\\zabbix_agent2.log"
-    zabbix_msi_log: "C:\\Temp\\zabbix_agent2_install.log"
+    zabbix_agent2_exe: "{{ zabbix_install_dir }}\\zabbix_agent2.exe"
+    zabbix_conf: "{{ zabbix_install_dir }}\\zabbix_agent2.conf"
+    zabbix_log: "{{ zabbix_install_dir }}\\zabbix_agent2.log"
+    zabbix_msi_log: "{{ zabbix_temp_dir }}\\zabbix_agent2_install.log"
     zabbix_service_name: "Zabbix Agent 2"
+    zabbix_firewall_rule_name: "Zabbix Agent 2"
 
   tasks:
     - name: Criar diretorio temporario
@@ -37,49 +43,28 @@
       when: not zabbix_agent2_file.stat.exists
 
     - name: Instalar Zabbix Agent 2 sem reiniciar o Windows
-      ansible.windows.win_shell: |
-        $result = Start-Process -FilePath "msiexec.exe" -ArgumentList @(
-          '/i', '{{ zabbix_msi_dest }}',
-          '/quiet',
-          '/norestart',
-          '/l*v', '{{ zabbix_msi_log }}',
-          'SERVER={{ zabbix_server_passive }}',
-          'SERVERACTIVE={{ zabbix_server_active }}',
-          'LISTENPORT={{ zabbix_agent_port }}',
-          'HOSTNAME={{ zabbix_hostname }}',
-          'ENABLEPATH=1'
-        ) -Wait -PassThru
-
-        Write-Output "EXIT_CODE=$($result.ExitCode)"
-
-        if ($result.ExitCode -notin @(0, 3010)) {
-          if (Test-Path "{{ zabbix_msi_log }}") {
-            Get-Content "{{ zabbix_msi_log }}" -Tail 80
-          }
-          exit $result.ExitCode
-        }
-      register: zabbix_install
-      changed_when: true
+      ansible.windows.win_package:
+        path: "{{ zabbix_msi_dest }}"
+        arguments: >-
+          /quiet
+          /norestart
+          /l*v "{{ zabbix_msi_log }}"
+          SERVER="{{ zabbix_server_passive }}"
+          SERVERACTIVE="{{ zabbix_server_active }}"
+          LISTENPORT="{{ zabbix_agent_port }}"
+          HOSTNAME="{{ zabbix_hostname }}"
+          ENABLEPATH="1"
+        state: present
+        creates_path: "{{ zabbix_agent2_exe }}"
       when: not zabbix_agent2_file.stat.exists
 
     - name: Aguardar servico Zabbix Agent 2 ficar disponivel
-      ansible.windows.win_shell: |
-        $timeout = 60
-        $elapsed = 0
-
-        while ($elapsed -lt $timeout) {
-          $svc = Get-Service -Name "{{ zabbix_service_name }}" -ErrorAction SilentlyContinue
-          if ($svc) {
-            Write-Output "Servico encontrado: $($svc.Status)"
-            exit 0
-          }
-
-          Start-Sleep -Seconds 2
-          $elapsed += 2
-        }
-
-        Write-Error "Servico {{ zabbix_service_name }} nao encontrado apos ${timeout}s"
-        exit 1
+      ansible.windows.win_service_info:
+        name: "{{ zabbix_service_name }}"
+      register: zabbix_service_info
+      until: zabbix_service_info.exists
+      retries: 30
+      delay: 2
 
     - name: Garantir configuracao correta do agente
       ansible.windows.win_shell: |
@@ -93,11 +78,11 @@
           "TLSAccept" = "unencrypted"
         }
 
-        if (-not (Test-Path $conf)) {
+        if (-not (Test-Path -LiteralPath $conf)) {
           throw "Arquivo de configuracao nao encontrado: $conf"
         }
 
-        $content = Get-Content -LiteralPath $conf
+        $content = @(Get-Content -LiteralPath $conf)
         $changed = $false
 
         foreach ($key in $settings.Keys) {
@@ -106,15 +91,15 @@
           $pattern = "^\s*#?\s*$([regex]::Escape($key))\s*=.*$"
 
           if ($content -match $pattern) {
-            $newContent = $content | ForEach-Object {
-              if ($_ -match $pattern) { $line } else { $_ }
+            $newContent = foreach ($item in $content) {
+              if ($item -match $pattern) { $line } else { $item }
             }
 
             if (($newContent -join "`n") -ne ($content -join "`n")) {
               $changed = $true
             }
 
-            $content = $newContent
+            $content = @($newContent)
           } else {
             $content += $line
             $changed = $true
@@ -133,18 +118,25 @@
 
     - name: Liberar porta 10050 no firewall do Windows
       ansible.windows.win_shell: |
-        $ruleName = "Zabbix Agent 2"
+        $ruleName = "{{ zabbix_firewall_rule_name }}"
         $port = "{{ zabbix_agent_port }}"
         $existing = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
 
         if ($existing) {
-          Set-NetFirewallRule -DisplayName $ruleName -Enabled True -Direction Inbound -Action Allow
-          Set-NetFirewallPortFilter -AssociatedNetFirewallRule $existing -Protocol TCP -LocalPort $port
-          Write-Output "Regra atualizada: $ruleName TCP/$port"
+          $portFilter = Get-NetFirewallPortFilter -AssociatedNetFirewallRule $existing
+          if ($existing.Enabled -ne "True" -or $existing.Direction -ne "Inbound" -or $existing.Action -ne "Allow" -or $portFilter.Protocol -ne "TCP" -or $portFilter.LocalPort -ne $port) {
+            Set-NetFirewallRule -DisplayName $ruleName -Enabled True -Direction Inbound -Action Allow
+            Set-NetFirewallPortFilter -AssociatedNetFirewallRule $existing -Protocol TCP -LocalPort $port
+            Write-Output "CHANGED"
+          } else {
+            Write-Output "OK"
+          }
         } else {
           New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port | Out-Null
-          Write-Output "Regra criada: $ruleName TCP/$port"
+          Write-Output "CHANGED"
         }
+      register: zabbix_firewall
+      changed_when: "'CHANGED' in zabbix_firewall.stdout"
 
     - name: Configurar servico para iniciar automaticamente
       ansible.windows.win_service:
@@ -155,7 +147,7 @@
     - name: Aplicar reinicio do servico antes da validacao
       ansible.builtin.meta: flush_handlers
 
-    - name: Validar servico, porta e configuracao
+    - name: Validar servico, porta, configuracao e acesso ao server
       ansible.windows.win_shell: |
         $svc = Get-Service -Name "{{ zabbix_service_name }}" -ErrorAction Stop
         if ($svc.Status -ne "Running") {
@@ -165,6 +157,11 @@
         $listener = Get-NetTCPConnection -LocalPort {{ zabbix_agent_port }} -State Listen -ErrorAction SilentlyContinue
         if (-not $listener) {
           throw "Porta {{ zabbix_agent_port }} nao esta em LISTEN"
+        }
+
+        $serverTest = Test-NetConnection -ComputerName "{{ zabbix_server_ip }}" -Port {{ zabbix_server_port }} -WarningAction SilentlyContinue
+        if (-not $serverTest.TcpTestSucceeded) {
+          throw "Nao conectou no Zabbix Server {{ zabbix_server_ip }}:{{ zabbix_server_port }}"
         }
 
         $conf = Get-Content -LiteralPath "{{ zabbix_conf }}"
@@ -194,7 +191,7 @@
 
     - name: Mostrar ultimas linhas do log do Zabbix Agent 2
       ansible.windows.win_shell: |
-        if (Test-Path "{{ zabbix_log }}") {
+        if (Test-Path -LiteralPath "{{ zabbix_log }}") {
           Get-Content -LiteralPath "{{ zabbix_log }}" -Tail 80
         } else {
           Write-Output "Log nao encontrado: {{ zabbix_log }}"
