@@ -28,23 +28,39 @@
         dest: "{{ zabbix_msi_dest }}"
         force: false
 
-    - name: Buscar product_id do Zabbix Agent 2 instalado (registro)
+    - name: Buscar todas as instalacoes do Zabbix Agent (registro 64 e 32 bits)
       ansible.windows.win_shell: |
-        $key = Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' |
-          Get-ItemProperty |
-          Where-Object { $_.DisplayName -eq 'Zabbix Agent 2' } |
-          Select-Object -First 1
-        if ($key) { Write-Output $key.PSChildName } else { Write-Output "NOTINSTALLED" }
+        $paths = @(
+          'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
+          'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+        )
+        $found = foreach ($p in $paths) {
+          if (Test-Path $p) {
+            Get-ChildItem $p | Get-ItemProperty | Where-Object { $_.DisplayName -like 'Zabbix Agent*' }
+          }
+        }
+        if ($found) {
+          $found | ForEach-Object { Write-Output $_.PSChildName }
+        } else {
+          Write-Output "NOTINSTALLED"
+        }
       register: zabbix_check
       changed_when: false
 
-    - name: Desinstalar Zabbix Agent 2 existente (sem reiniciar)
+    - name: Desinstalar todas as instalacoes existentes do Zabbix Agent (sem reiniciar)
       ansible.windows.win_package:
-        product_id: "{{ zabbix_check.stdout | trim }}"
-        path: "{{ zabbix_msi_dest }}"
+        product_id: "{{ item }}"
         arguments: "/quiet /norestart REBOOT=ReallySuppress"
         state: absent
-      when: zabbix_check.stdout | trim != 'NOTINSTALLED'
+      loop: "{{ zabbix_check.stdout_lines }}"
+      when: zabbix_check.stdout_lines | first != 'NOTINSTALLED'
+
+    - name: Garantir que o servico antigo nao ficou orfao
+      ansible.windows.win_service:
+        name: "{{ zabbix_service_name }}"
+        state: stopped
+      ignore_errors: true
+      when: zabbix_check.stdout_lines | first != 'NOTINSTALLED'
 
     - name: Instalar Zabbix Agent 2
       ansible.windows.win_package:
