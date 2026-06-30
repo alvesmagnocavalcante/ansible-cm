@@ -23,7 +23,6 @@
       ansible.builtin.set_fact:
         heartbeat_reachable: >-
           {{ '__HEARTBEAT_OK__' in (heartbeat_ping.stdout | default('')) }}
-      delegate_to: localhost
 
     - name: Consultar metricas somente leitura via PowerShell e CIM
       ansible.builtin.raw: |
@@ -151,7 +150,6 @@
                  (heartbeat_raw.rc | default(1) == 0) and
                  (heartbeat_raw.stdout | default('') | length > 0))
              else {} }}
-      delegate_to: localhost
 
 - name: Gerar e enviar relatorio consolidado
   hosts: localhost
