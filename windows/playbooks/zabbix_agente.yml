@@ -1,5 +1,5 @@
 ---
-- name: Instalar e configurar Zabbix Agent 2 nos Windows da Taiba
+- name: Desinstalar e reinstalar Zabbix Agent 2 nos Windows da Taiba
   hosts: windows_hosts
   gather_facts: false
 
@@ -27,6 +27,32 @@
         url: "{{ zabbix_msi_url }}"
         dest: "{{ zabbix_msi_dest }}"
         force: false
+
+    - name: Verificar se Zabbix Agent 2 ja esta instalado
+      ansible.windows.win_shell: |
+        $app = Get-CimInstance -ClassName Win32_Product -Filter "Name = 'Zabbix Agent 2'" -ErrorAction SilentlyContinue
+        if ($app) {
+          Write-Output "INSTALLED:$($app.IdentifyingNumber)"
+        } else {
+          Write-Output "NOTINSTALLED"
+        }
+      register: zabbix_check
+      changed_when: false
+
+    - name: Desinstalar Zabbix Agent 2 existente (sem reiniciar)
+      ansible.windows.win_package:
+        product_id: "{{ zabbix_check.stdout | trim | regex_search('(?<=INSTALLED:).*') }}"
+        path: "{{ zabbix_msi_dest }}"
+        arguments: "/quiet /norestart REBOOT=ReallySuppress"
+        state: absent
+      when: "'INSTALLED:' in zabbix_check.stdout"
+
+    - name: Garantir que o servico antigo nao existe mais
+      ansible.windows.win_service:
+        name: "{{ zabbix_service_name }}"
+        state: stopped
+      ignore_errors: true
+      when: "'INSTALLED:' in zabbix_check.stdout"
 
     - name: Instalar Zabbix Agent 2
       ansible.windows.win_package:
