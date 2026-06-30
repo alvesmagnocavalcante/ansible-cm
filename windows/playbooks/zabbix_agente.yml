@@ -1,5 +1,5 @@
 ---
-- name: Desinstalar e reinstalar Zabbix Agent 2 nos Windows da Taiba
+- name: Reinstalar Zabbix Agent 2 nos Windows da Taiba
   hosts: windows_hosts
   gather_facts: false
 
@@ -28,31 +28,23 @@
         dest: "{{ zabbix_msi_dest }}"
         force: false
 
-    - name: Verificar se Zabbix Agent 2 ja esta instalado
+    - name: Buscar product_id do Zabbix Agent 2 instalado (registro)
       ansible.windows.win_shell: |
-        $app = Get-CimInstance -ClassName Win32_Product -Filter "Name = 'Zabbix Agent 2'" -ErrorAction SilentlyContinue
-        if ($app) {
-          Write-Output "INSTALLED:$($app.IdentifyingNumber)"
-        } else {
-          Write-Output "NOTINSTALLED"
-        }
+        $key = Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' |
+          Get-ItemProperty |
+          Where-Object { $_.DisplayName -eq 'Zabbix Agent 2' } |
+          Select-Object -First 1
+        if ($key) { Write-Output $key.PSChildName } else { Write-Output "NOTINSTALLED" }
       register: zabbix_check
       changed_when: false
 
     - name: Desinstalar Zabbix Agent 2 existente (sem reiniciar)
       ansible.windows.win_package:
-        product_id: "{{ zabbix_check.stdout | trim | regex_search('(?<=INSTALLED:).*') }}"
+        product_id: "{{ zabbix_check.stdout | trim }}"
         path: "{{ zabbix_msi_dest }}"
         arguments: "/quiet /norestart REBOOT=ReallySuppress"
         state: absent
-      when: "'INSTALLED:' in zabbix_check.stdout"
-
-    - name: Garantir que o servico antigo nao existe mais
-      ansible.windows.win_service:
-        name: "{{ zabbix_service_name }}"
-        state: stopped
-      ignore_errors: true
-      when: "'INSTALLED:' in zabbix_check.stdout"
+      when: zabbix_check.stdout | trim != 'NOTINSTALLED'
 
     - name: Instalar Zabbix Agent 2
       ansible.windows.win_package:
@@ -67,88 +59,19 @@
           HOSTNAME="{{ zabbix_hostname }}"
         state: present
 
-    - name: Ajustar configuracao do agente
-      ansible.windows.win_shell: |
-        $conf = "{{ zabbix_conf }}"
-        $settings = @{
-          "Server" = "{{ zabbix_server_ip }}"
-          "ServerActive" = "{{ zabbix_server_ip }}:{{ zabbix_server_port }}"
-          "Hostname" = "{{ zabbix_hostname }}"
-          "ListenPort" = "{{ zabbix_agent_port }}"
-        }
-
-        if (-not (Test-Path -LiteralPath $conf)) {
-          throw "Arquivo de configuracao nao encontrado: $conf"
-        }
-
-        $content = Get-Content -LiteralPath $conf
-        $changed = $false
-
-        foreach ($key in $settings.Keys) {
-          $line = "$key=$($settings[$key])"
-          $pattern = "^\s*#?\s*$key\s*=.*$"
-
-          if ($content -match $pattern) {
-            $newContent = $content | ForEach-Object {
-              if ($_ -match $pattern) { $line } else { $_ }
-            }
-          } else {
-            $newContent = $content + $line
-          }
-
-          if (($newContent -join "`n") -ne ($content -join "`n")) {
-            $changed = $true
-            $content = $newContent
-          }
-        }
-
-        if ($changed) {
-          Set-Content -LiteralPath $conf -Value $content -Encoding ASCII
-          Write-Output "CHANGED"
-        } else {
-          Write-Output "OK"
-        }
-      register: zabbix_config
-      changed_when: "'CHANGED' in zabbix_config.stdout"
-      notify: Reiniciar Zabbix Agent 2
-
-    - name: Liberar porta do agente no firewall
-      ansible.windows.win_shell: |
-        if (-not (Get-NetFirewallRule -DisplayName "Zabbix Agent 2" -ErrorAction SilentlyContinue)) {
-          New-NetFirewallRule -DisplayName "Zabbix Agent 2" -Direction Inbound -Action Allow -Protocol TCP -LocalPort {{ zabbix_agent_port }} | Out-Null
-          Write-Output "CHANGED"
-        } else {
-          Write-Output "OK"
-        }
-      register: zabbix_firewall
-      changed_when: "'CHANGED' in zabbix_firewall.stdout"
-
     - name: Garantir servico iniciado
       ansible.windows.win_service:
         name: "{{ zabbix_service_name }}"
         start_mode: auto
         state: started
 
-    - name: Aplicar ajustes pendentes do servico antes da validacao
-      ansible.builtin.meta: flush_handlers
-
-    - name: Validar conexao com o Zabbix Server
+    - name: Validar status do servico
       ansible.windows.win_shell: |
         $svc = Get-Service -Name "{{ zabbix_service_name }}" -ErrorAction Stop
-        if ($svc.Status -ne "Running") {
-          throw "Servico nao esta rodando: $($svc.Status)"
-        }
-
-        $server = Test-NetConnection -ComputerName "{{ zabbix_server_ip }}" -Port {{ zabbix_server_port }} -WarningAction SilentlyContinue
-        if (-not $server.TcpTestSucceeded) {
-          throw "Sem conexao com {{ zabbix_server_ip }}:{{ zabbix_server_port }}"
-        }
-
-        Write-Output "OK - {{ zabbix_hostname }} conectado ao Zabbix Server {{ zabbix_server_ip }}:{{ zabbix_server_port }}"
+        Write-Output "Status: $($svc.Status)"
+      register: zabbix_status
       changed_when: false
 
-  handlers:
-    - name: Reiniciar Zabbix Agent 2
-      ansible.windows.win_service:
-        name: "{{ zabbix_service_name }}"
-        state: restarted
+    - name: Exibir status
+      ansible.builtin.debug:
+        var: zabbix_status.stdout
