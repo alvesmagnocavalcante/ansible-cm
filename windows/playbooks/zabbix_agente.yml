@@ -74,6 +74,7 @@
           SERVER="{{ zabbix_server_allowed }}"
           SERVERACTIVE="{{ zabbix_server_ip }}:{{ zabbix_server_port }}"
           LISTENPORT="{{ zabbix_agent_port }}"
+          LISTENIP="0.0.0.0"
           HOSTNAME="{{ zabbix_hostname }}"
         state: present
 
@@ -91,6 +92,7 @@
           "ServerActive" = "{{ zabbix_server_ip }}:{{ zabbix_server_port }}"
           "Hostname" = "{{ zabbix_hostname }}"
           "ListenPort" = "{{ zabbix_agent_port }}"
+          "ListenIP" = "0.0.0.0"
         }
 
         if (-not (Test-Path -LiteralPath $conf)) {
@@ -129,17 +131,37 @@
 
     - name: Liberar porta do agente no firewall
       ansible.windows.win_shell: |
-        $rule = Get-NetFirewallRule -DisplayName "Zabbix Agent 2" -ErrorAction SilentlyContinue
+        Get-NetFirewallRule -DisplayName "Zabbix Agent 2" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 
-        if (-not $rule) {
-          New-NetFirewallRule -DisplayName "Zabbix Agent 2" -Direction Inbound -Action Allow -Protocol TCP -LocalPort {{ zabbix_agent_port }} | Out-Null
-          Write-Output "CHANGED"
-        } else {
-          Set-NetFirewallRule -DisplayName "Zabbix Agent 2" -Enabled True -Direction Inbound -Action Allow
-          Write-Output "OK"
-        }
+        New-NetFirewallRule `
+          -DisplayName "Zabbix Agent 2" `
+          -Direction Inbound `
+          -Action Allow `
+          -Protocol TCP `
+          -LocalPort {{ zabbix_agent_port }} `
+          -Profile Any | Out-Null
+
+        Write-Output "CHANGED"
       register: zabbix_firewall
       changed_when: "'CHANGED' in zabbix_firewall.stdout"
+
+    - name: Liberar porta do agente no firewall legado se existir
+      ansible.windows.win_shell: |
+        netsh advfirewall firewall delete rule name="Zabbix Agent 2 Legacy" | Out-Null
+        netsh advfirewall firewall add rule name="Zabbix Agent 2 Legacy" dir=in action=allow protocol=TCP localport={{ zabbix_agent_port }} | Out-Null
+        Write-Output "CHANGED"
+      register: zabbix_firewall_legacy
+      changed_when: "'CHANGED' in zabbix_firewall_legacy.stdout"
+
+    - name: Garantir que o perfil de rede permite a regra
+      ansible.windows.win_shell: |
+        try {
+          Set-NetConnectionProfile -NetworkCategory Private -ErrorAction SilentlyContinue
+        } catch {
+          Write-Output "Perfil de rede nao alterado: $($_.Exception.Message)"
+        }
+      changed_when: false
+      failed_when: false
 
     - name: Garantir servico iniciado
       ansible.windows.win_service:
@@ -154,6 +176,11 @@
           throw "Servico nao esta rodando: $($svc.Status)"
         }
 
+        $listener = Get-NetTCPConnection -LocalPort {{ zabbix_agent_port }} -State Listen -ErrorAction SilentlyContinue
+        if (-not $listener) {
+          throw "Agent nao esta escutando localmente na porta {{ zabbix_agent_port }}"
+        }
+
         $server = Test-NetConnection -ComputerName "{{ zabbix_server_ip }}" -Port {{ zabbix_server_port }} -WarningAction SilentlyContinue
         if (-not $server.TcpTestSucceeded) {
           throw "Sem conexao com {{ zabbix_server_ip }}:{{ zabbix_server_port }}"
@@ -162,6 +189,8 @@
         Write-Output "OK - {{ zabbix_hostname }} conectado ao Zabbix Server {{ zabbix_server_ip }}:{{ zabbix_server_port }}"
         Write-Output "Server={{ zabbix_server_allowed }}"
         Write-Output "ServerActive={{ zabbix_server_ip }}:{{ zabbix_server_port }}"
+        Write-Output "ListenIP=0.0.0.0"
+        Write-Output "ListenPort={{ zabbix_agent_port }}"
 
         if (Test-Path -LiteralPath "{{ zabbix_log }}") {
           Get-Content -LiteralPath "{{ zabbix_log }}" -Tail 30
