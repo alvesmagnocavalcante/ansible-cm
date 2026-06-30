@@ -5,6 +5,7 @@
 
   vars:
     zabbix_server_ip: "10.212.134.202"
+    zabbix_server_allowed: "10.212.134.202,10.212.134.203,10.212.0.0/16,10.197.0.0/16"
     zabbix_agent_port: 10050
     zabbix_server_port: 10051
     zabbix_hostname: "{{ inventory_hostname }}"
@@ -14,6 +15,7 @@
     zabbix_msi_dest: "C:\\Temp\\zabbix_agent2.msi"
     zabbix_install_dir: "C:\\Program Files\\Zabbix Agent 2"
     zabbix_conf: "{{ zabbix_install_dir }}\\zabbix_agent2.conf"
+    zabbix_log: "{{ zabbix_install_dir }}\\zabbix_agent2.log"
     zabbix_service_name: "Zabbix Agent 2"
 
   tasks:
@@ -69,11 +71,75 @@
           /quiet
           /norestart
           REBOOT=ReallySuppress
-          SERVER="{{ zabbix_server_ip }}"
+          SERVER="{{ zabbix_server_allowed }}"
           SERVERACTIVE="{{ zabbix_server_ip }}:{{ zabbix_server_port }}"
           LISTENPORT="{{ zabbix_agent_port }}"
           HOSTNAME="{{ zabbix_hostname }}"
         state: present
+
+    - name: Parar servico para aplicar configuracao
+      ansible.windows.win_service:
+        name: "{{ zabbix_service_name }}"
+        state: stopped
+      ignore_errors: true
+
+    - name: Ajustar configuracao do agente
+      ansible.windows.win_shell: |
+        $conf = "{{ zabbix_conf }}"
+        $settings = @{
+          "Server" = "{{ zabbix_server_allowed }}"
+          "ServerActive" = "{{ zabbix_server_ip }}:{{ zabbix_server_port }}"
+          "Hostname" = "{{ zabbix_hostname }}"
+          "ListenPort" = "{{ zabbix_agent_port }}"
+        }
+
+        if (-not (Test-Path -LiteralPath $conf)) {
+          throw "Arquivo de configuracao nao encontrado: $conf"
+        }
+
+        $content = Get-Content -LiteralPath $conf
+        $changed = $false
+
+        foreach ($key in $settings.Keys) {
+          $line = "$key=$($settings[$key])"
+          $pattern = "^\s*#?\s*$key\s*=.*$"
+
+          if ($content -match $pattern) {
+            $newContent = $content | ForEach-Object {
+              if ($_ -match $pattern) { $line } else { $_ }
+            }
+          } else {
+            $newContent = $content + $line
+          }
+
+          if (($newContent -join "`n") -ne ($content -join "`n")) {
+            $changed = $true
+            $content = $newContent
+          }
+        }
+
+        if ($changed) {
+          Set-Content -LiteralPath $conf -Value $content -Encoding ASCII
+          Write-Output "CHANGED"
+        } else {
+          Write-Output "OK"
+        }
+      register: zabbix_config
+      changed_when: "'CHANGED' in zabbix_config.stdout"
+
+    - name: Liberar porta do agente no firewall
+      ansible.windows.win_shell: |
+        $rule = Get-NetFirewallRule -DisplayName "Zabbix Agent 2" -ErrorAction SilentlyContinue
+
+        if (-not $rule) {
+          New-NetFirewallRule -DisplayName "Zabbix Agent 2" -Direction Inbound -Action Allow -Protocol TCP -LocalPort {{ zabbix_agent_port }} | Out-Null
+          Write-Output "CHANGED"
+        } else {
+          Set-NetFirewallRule -DisplayName "Zabbix Agent 2" -Enabled True -Direction Inbound -Action Allow
+          Write-Output "OK"
+        }
+      register: zabbix_firewall
+      changed_when: "'CHANGED' in zabbix_firewall.stdout"
 
     - name: Garantir servico iniciado
       ansible.windows.win_service:
@@ -81,10 +147,25 @@
         start_mode: auto
         state: started
 
-    - name: Validar status do servico
+    - name: Validar servico e conexao com o Zabbix Server
       ansible.windows.win_shell: |
         $svc = Get-Service -Name "{{ zabbix_service_name }}" -ErrorAction Stop
-        Write-Output "Status: $($svc.Status)"
+        if ($svc.Status -ne "Running") {
+          throw "Servico nao esta rodando: $($svc.Status)"
+        }
+
+        $server = Test-NetConnection -ComputerName "{{ zabbix_server_ip }}" -Port {{ zabbix_server_port }} -WarningAction SilentlyContinue
+        if (-not $server.TcpTestSucceeded) {
+          throw "Sem conexao com {{ zabbix_server_ip }}:{{ zabbix_server_port }}"
+        }
+
+        Write-Output "OK - {{ zabbix_hostname }} conectado ao Zabbix Server {{ zabbix_server_ip }}:{{ zabbix_server_port }}"
+        Write-Output "Server={{ zabbix_server_allowed }}"
+        Write-Output "ServerActive={{ zabbix_server_ip }}:{{ zabbix_server_port }}"
+
+        if (Test-Path -LiteralPath "{{ zabbix_log }}") {
+          Get-Content -LiteralPath "{{ zabbix_log }}" -Tail 30
+        }
       register: zabbix_status
       changed_when: false
 
