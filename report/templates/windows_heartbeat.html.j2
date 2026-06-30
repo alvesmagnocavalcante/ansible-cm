@@ -5,40 +5,108 @@
   <style>
     body { font-family: Arial, sans-serif; color: #20242a; margin: 24px; }
     h1 { color: #183153; margin-bottom: 4px; }
+    h2 { color: #183153; margin-top: 28px; }
     .muted { color: #667085; }
-    .summary { display: flex; gap: 12px; margin: 22px 0; }
-    .card { border: 1px solid #d9dee7; border-radius: 8px; padding: 12px 18px; }
+    .summary { display: flex; gap: 12px; margin: 22px 0; flex-wrap: wrap; }
+    .card { border: 1px solid #d9dee7; border-radius: 8px; padding: 12px 18px; min-width: 120px; }
     .ok { color: #067647; font-weight: bold; }
     .warning { color: #b54708; font-weight: bold; }
     .critical { color: #b42318; font-weight: bold; }
     table { border-collapse: collapse; width: 100%; margin: 10px 0 28px; }
-    th, td { border: 1px solid #d9dee7; padding: 8px; text-align: left; }
+    th, td { border: 1px solid #d9dee7; padding: 8px; text-align: left; vertical-align: top; }
     th { background: #f2f4f7; }
   </style>
 </head>
 <body>
   <h1>Status dos Servidores e VMs Windows</h1>
   <div class="muted">Gerado em {{ ansible_facts['date_time']['date'] }} {{ ansible_facts['date_time']['time'] }} (controlador)</div>
+
   <div class="summary">
     <div class="card"><span class="ok">{{ heartbeat_online_hosts | length }}</span><br>online</div>
     <div class="card"><span class="critical">{{ heartbeat_offline_hosts | length }}</span><br>offline/sem coleta</div>
     <div class="card"><span class="warning">{{ heartbeat_alert_hosts | length }}</span><br>com alertas</div>
+    <div class="card"><span class="warning">{{ heartbeat_defender_alert_hosts | length }}</span><br>alertas Defender</div>
   </div>
 
 {% for host in heartbeat_hosts %}
   {% if hostvars[host].heartbeat_collection_ok | default(false) %}
     {% set d = hostvars[host].heartbeat_data %}
     <h2>{{ d.hostname | default(host) }} <span class="ok">ONLINE</span></h2>
+
     <table>
-      <tr><th>Endereco</th><td>{{ hostvars[host].ansible_host | default(host) }}</td><th>Sistema</th><td>{{ d.os }} {{ d.os_version }}</td></tr>
-      <tr><th>Fabricante/modelo</th><td>{{ d.manufacturer }} / {{ d.model }}</td><th>Uptime</th><td>{{ d.uptime_days }} dias (boot: {{ d.last_boot }})</td></tr>
-      <tr><th>CPU</th><td class="{{ 'critical' if d.cpu_percent | float >= cpu_warning_percent else 'ok' }}">{{ d.cpu_percent }}%</td><th>Memoria</th><td class="{{ 'critical' if d.memory_used_percent | float >= memory_warning_percent else 'ok' }}">{{ d.memory_used_percent }}% de {{ d.memory_total_gb }} GB</td></tr>
-      <tr><th>Servicos automaticos parados</th><td class="{{ 'warning' if d.stopped_automatic_services | int > 0 else 'ok' }}">{{ d.stopped_automatic_services }}</td><th>Coletado em</th><td>{{ d.collected_at }}</td></tr>
+      <tr>
+        <th>Endereco</th>
+        <td>{{ hostvars[host].ansible_host | default(host) }}</td>
+        <th>Sistema</th>
+        <td>{{ d.os }} {{ d.os_version }}</td>
+      </tr>
+      <tr>
+        <th>Fabricante/modelo</th>
+        <td>{{ d.manufacturer }} / {{ d.model }}</td>
+        <th>Uptime</th>
+        <td>{{ d.uptime_days }} dias (boot: {{ d.last_boot }})</td>
+      </tr>
+      <tr>
+        <th>CPU</th>
+        <td class="{{ 'critical' if d.cpu_percent | float >= cpu_warning_percent else 'ok' }}">{{ d.cpu_percent }}%</td>
+        <th>Memoria</th>
+        <td class="{{ 'critical' if d.memory_used_percent | float >= memory_warning_percent else 'ok' }}">{{ d.memory_used_percent }}% de {{ d.memory_total_gb }} GB</td>
+      </tr>
+      <tr>
+        <th>Servicos automaticos parados</th>
+        <td class="{{ 'warning' if d.stopped_automatic_services | int > 0 else 'ok' }}">{{ d.stopped_automatic_services }}</td>
+        <th>Coletado em</th>
+        <td>{{ d.collected_at }}</td>
+      </tr>
     </table>
+
+    <table>
+      <tr>
+        <th>Windows Defender</th>
+        <td class="{{ 'ok' if d.defender_status | default('') == 'Ativo' else 'critical' }}">
+          {{ d.defender_status | default('Indisponivel', true) }}
+        </td>
+        <th>Tempo real</th>
+        <td class="{{ 'ok' if d.defender_realtime_enabled | default(false, true) else 'critical' }}">
+          {{ 'Ativo' if d.defender_realtime_enabled | default(false, true) else 'Desativado/Indisponivel' }}
+        </td>
+      </tr>
+      <tr>
+        <th>Assinatura Defender</th>
+        <td>{{ d.defender_signature_age_days | default('-', true) }} dias</td>
+        <th>Erro Defender</th>
+        <td>{{ d.defender_error | default('-', true) }}</td>
+      </tr>
+      <tr>
+        <th>Firewall</th>
+        <td class="{{ 'ok' if d.firewall_all_enabled | default(false, true) else 'critical' }}">
+          {{ d.firewall_status | default('Indisponivel', true) }}
+        </td>
+        <th>Erro Firewall</th>
+        <td>{{ d.firewall_error | default('-', true) }}</td>
+      </tr>
+      <tr>
+        <th>Perfis do Firewall</th>
+        <td colspan="3">
+          {% for profile in d.firewall_profiles | default([], true) %}
+            {{ profile.name }}={{ 'Ativo' if profile.enabled else 'Desativado' }}
+            {% if not loop.last %}<br>{% endif %}
+          {% else %}
+            Indisponivel
+          {% endfor %}
+        </td>
+      </tr>
+    </table>
+
     <table>
       <tr><th>Disco</th><th>Total</th><th>Livre</th><th>Livre (%)</th></tr>
       {% for disk in d.disks | default([]) %}
-      <tr><td>{{ disk.drive }}</td><td>{{ disk.size_gb }} GB</td><td>{{ disk.free_gb }} GB</td><td class="{{ 'critical' if disk.free_percent | float <= disk_warning_percent else 'ok' }}">{{ disk.free_percent }}%</td></tr>
+      <tr>
+        <td>{{ disk.drive }}</td>
+        <td>{{ disk.size_gb }} GB</td>
+        <td>{{ disk.free_gb }} GB</td>
+        <td class="{{ 'critical' if disk.free_percent | float <= disk_warning_percent else 'ok' }}">{{ disk.free_percent }}%</td>
+      </tr>
       {% endfor %}
     </table>
   {% else %}
