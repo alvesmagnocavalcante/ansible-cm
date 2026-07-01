@@ -25,7 +25,7 @@
     <div class="card"><span class="ok">{{ heartbeat_online_hosts | length }}</span><br>online</div>
     <div class="card"><span class="critical">{{ heartbeat_offline_hosts | length }}</span><br>offline/sem coleta</div>
     <div class="card"><span class="warning">{{ heartbeat_alert_hosts | length }}</span><br>com alertas</div>
-    <div class="card"><span class="warning">{{ heartbeat_defender_alert_hosts | length }}</span><br>alertas Defender</div>
+    <div class="card"><span class="warning">{{ heartbeat_defender_alert_hosts | length }}</span><br>alertas Defender/Firewall</div>
   </div>
 
 {% for host in heartbeat_hosts %}
