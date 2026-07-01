@@ -10,6 +10,10 @@
     zabbix_server_port: 10051
     zabbix_hostname: "{{ inventory_hostname }}"
 
+    # Se true, o playbook falha caso o host não conecte no Zabbix Server:10051.
+    # Recomendado deixar false para não quebrar a instalação por problema de rede/firewall/VPN.
+    zabbix_fail_if_no_server_connection: false
+
     zabbix_msi_url: "https://cdn.zabbix.com/zabbix/binaries/stable/7.4/7.4.11/zabbix_agent2-7.4.11-windows-amd64-openssl.msi"
     zabbix_temp_dir: "C:\\Temp"
     zabbix_msi_dest: "C:\\Temp\\zabbix_agent2.msi"
@@ -30,17 +34,21 @@
         dest: "{{ zabbix_msi_dest }}"
         force: false
 
-    - name: Buscar todas as instalacoes do Zabbix Agent (registro 64 e 32 bits)
+    - name: Buscar todas as instalacoes do Zabbix Agent no registro
       ansible.windows.win_shell: |
         $paths = @(
           'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
           'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
         )
+
         $found = foreach ($p in $paths) {
           if (Test-Path $p) {
-            Get-ChildItem $p | Get-ItemProperty | Where-Object { $_.DisplayName -like 'Zabbix Agent*' }
+            Get-ChildItem $p |
+              Get-ItemProperty |
+              Where-Object { $_.DisplayName -like 'Zabbix Agent*' }
           }
         }
+
         if ($found) {
           $found | ForEach-Object { Write-Output $_.PSChildName }
         } else {
@@ -49,20 +57,24 @@
       register: zabbix_check
       changed_when: false
 
-    - name: Desinstalar todas as instalacoes existentes do Zabbix Agent (sem reiniciar)
+    - name: Desinstalar todas as instalacoes existentes do Zabbix Agent sem reiniciar
       ansible.windows.win_package:
         product_id: "{{ item }}"
         arguments: "/quiet /norestart REBOOT=ReallySuppress"
         state: absent
       loop: "{{ zabbix_check.stdout_lines }}"
-      when: zabbix_check.stdout_lines | first != 'NOTINSTALLED'
+      when:
+        - zabbix_check.stdout_lines | length > 0
+        - zabbix_check.stdout_lines | first != 'NOTINSTALLED'
 
     - name: Garantir que o servico antigo nao ficou orfao
       ansible.windows.win_service:
         name: "{{ zabbix_service_name }}"
         state: stopped
       ignore_errors: true
-      when: zabbix_check.stdout_lines | first != 'NOTINSTALLED'
+      when:
+        - zabbix_check.stdout_lines | length > 0
+        - zabbix_check.stdout_lines | first != 'NOTINSTALLED'
 
     - name: Instalar Zabbix Agent 2
       ansible.windows.win_package:
@@ -87,12 +99,13 @@
     - name: Ajustar configuracao do agente
       ansible.windows.win_shell: |
         $conf = "{{ zabbix_conf }}"
-        $settings = @{
-          "Server" = "{{ zabbix_server_allowed }}"
+
+        $settings = [ordered]@{
+          "Server"       = "{{ zabbix_server_allowed }}"
           "ServerActive" = "{{ zabbix_server_ip }}:{{ zabbix_server_port }}"
-          "Hostname" = "{{ zabbix_hostname }}"
-          "ListenPort" = "{{ zabbix_agent_port }}"
-          "ListenIP" = "0.0.0.0"
+          "Hostname"     = "{{ zabbix_hostname }}"
+          "ListenPort"   = "{{ zabbix_agent_port }}"
+          "ListenIP"     = "0.0.0.0"
         }
 
         if (-not (Test-Path -LiteralPath $conf)) {
@@ -108,7 +121,11 @@
 
           if ($content -match $pattern) {
             $newContent = $content | ForEach-Object {
-              if ($_ -match $pattern) { $line } else { $_ }
+              if ($_ -match $pattern) {
+                $line
+              } else {
+                $_
+              }
             }
           } else {
             $newContent = $content + $line
@@ -131,7 +148,8 @@
 
     - name: Liberar porta do agente no firewall
       ansible.windows.win_shell: |
-        Get-NetFirewallRule -DisplayName "Zabbix Agent 2" -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+        Get-NetFirewallRule -DisplayName "Zabbix Agent 2" -ErrorAction SilentlyContinue |
+          Remove-NetFirewallRule
 
         New-NetFirewallRule `
           -DisplayName "Zabbix Agent 2" `
@@ -169,35 +187,77 @@
         start_mode: auto
         state: started
 
-    - name: Validar servico e conexao com o Zabbix Server
+    - name: Validar servico local do Zabbix Agent 2
       ansible.windows.win_shell: |
         $svc = Get-Service -Name "{{ zabbix_service_name }}" -ErrorAction Stop
+
         if ($svc.Status -ne "Running") {
           throw "Servico nao esta rodando: $($svc.Status)"
         }
 
         $listener = Get-NetTCPConnection -LocalPort {{ zabbix_agent_port }} -State Listen -ErrorAction SilentlyContinue
+
         if (-not $listener) {
           throw "Agent nao esta escutando localmente na porta {{ zabbix_agent_port }}"
         }
 
-        $server = Test-NetConnection -ComputerName "{{ zabbix_server_ip }}" -Port {{ zabbix_server_port }} -WarningAction SilentlyContinue
-        if (-not $server.TcpTestSucceeded) {
-          throw "Sem conexao com {{ zabbix_server_ip }}:{{ zabbix_server_port }}"
-        }
-
-        Write-Output "OK - {{ zabbix_hostname }} conectado ao Zabbix Server {{ zabbix_server_ip }}:{{ zabbix_server_port }}"
-        Write-Output "Server={{ zabbix_server_allowed }}"
-        Write-Output "ServerActive={{ zabbix_server_ip }}:{{ zabbix_server_port }}"
-        Write-Output "ListenIP=0.0.0.0"
-        Write-Output "ListenPort={{ zabbix_agent_port }}"
-
-        if (Test-Path -LiteralPath "{{ zabbix_log }}") {
-          Get-Content -LiteralPath "{{ zabbix_log }}" -Tail 30
-        }
-      register: zabbix_status
+        Write-Output "OK - Servico {{ zabbix_service_name }} esta rodando"
+        Write-Output "OK - Agent escutando localmente na porta {{ zabbix_agent_port }}"
+      register: zabbix_local_status
       changed_when: false
 
-    - name: Exibir status
+    - name: Validar conexao com Zabbix Server
+      ansible.windows.win_shell: |
+        $serverIp = "{{ zabbix_server_ip }}"
+        $serverPort = {{ zabbix_server_port }}
+        $failIfNoConnection = "{{ zabbix_fail_if_no_server_connection | bool }}"
+
+        $server = Test-NetConnection -ComputerName $serverIp -Port $serverPort -WarningAction SilentlyContinue
+
+        if ($server.TcpTestSucceeded) {
+          Write-Output "OK - Conexao com Zabbix Server $serverIp`:$serverPort funcionando"
+          exit 0
+        }
+
+        Write-Output "AVISO - Sem conexao com Zabbix Server $serverIp`:$serverPort"
+        Write-Output "AVISO - Verificar firewall, rota, VPN ou se o Zabbix Server esta escutando na porta $serverPort"
+
+        if ($failIfNoConnection -eq "True") {
+          throw "Sem conexao com Zabbix Server $serverIp`:$serverPort"
+        }
+
+        exit 0
+      register: zabbix_server_connection
+      changed_when: false
+
+    - name: Exibir configuracao aplicada
       ansible.builtin.debug:
-        var: zabbix_status.stdout
+        msg:
+          - "Hostname={{ zabbix_hostname }}"
+          - "Server={{ zabbix_server_allowed }}"
+          - "ServerActive={{ zabbix_server_ip }}:{{ zabbix_server_port }}"
+          - "ListenIP=0.0.0.0"
+          - "ListenPort={{ zabbix_agent_port }}"
+
+    - name: Exibir validacao local
+      ansible.builtin.debug:
+        var: zabbix_local_status.stdout_lines
+
+    - name: Exibir validacao de conexao com Zabbix Server
+      ansible.builtin.debug:
+        var: zabbix_server_connection.stdout_lines
+
+    - name: Exibir ultimas linhas do log do agente
+      ansible.windows.win_shell: |
+        if (Test-Path -LiteralPath "{{ zabbix_log }}") {
+          Get-Content -LiteralPath "{{ zabbix_log }}" -Tail 30
+        } else {
+          Write-Output "Log ainda nao encontrado: {{ zabbix_log }}"
+        }
+      register: zabbix_log_tail
+      changed_when: false
+      failed_when: false
+
+    - name: Exibir log do agente
+      ansible.builtin.debug:
+        var: zabbix_log_tail.stdout_lines
