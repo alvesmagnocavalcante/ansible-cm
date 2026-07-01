@@ -54,6 +54,44 @@
           $_.StartMode -eq 'Auto' -and $_.State -ne 'Running'
         }).Count
 
+        [pscustomobject]@{
+          hostname = $env:COMPUTERNAME
+          os = $os.Caption
+          os_version = $os.Version
+          manufacturer = $computer.Manufacturer
+          model = $computer.Model
+          cpu_percent = $cpu
+          memory_total_gb = [math]::Round($os.TotalVisibleMemorySize / 1MB, 1)
+          memory_used_percent = $memoryUsed
+          uptime_days = [math]::Round($uptime.TotalDays, 1)
+          last_boot = $os.LastBootUpTime.ToString('yyyy-MM-dd HH:mm:ss')
+          stopped_automatic_services = $stoppedAutomatic
+          disks = $disks
+          collected_at = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+        } | ConvertTo-Json -Depth 5 -Compress
+      register: heartbeat_raw
+      changed_when: false
+      failed_when: false
+      when: heartbeat_reachable
+
+    - name: Normalizar dados coletados
+      ansible.builtin.set_fact:
+        heartbeat_collection_ok: >-
+          {{ heartbeat_reachable and
+             (heartbeat_raw.rc | default(1) == 0) and
+             (heartbeat_raw.stdout | default('') | length > 0) }}
+        heartbeat_data: >-
+          {{ (heartbeat_raw.stdout | from_json)
+             if (heartbeat_reachable and
+                 (heartbeat_raw.rc | default(1) == 0) and
+                 (heartbeat_raw.stdout | default('') | length > 0))
+             else {} }}
+      delegate_to: localhost
+
+    - name: Consultar Defender e Firewall sem afetar status online
+      ansible.builtin.raw: |
+        $ProgressPreference = 'SilentlyContinue'
+
         $defenderEnabled = $null
         $defenderRealtime = $null
         $defenderSignatureAge = $null
@@ -61,7 +99,7 @@
         $defenderStatus = "Indisponivel"
 
         try {
-          $defender = Get-MpComputerStatus
+          $defender = Get-MpComputerStatus -ErrorAction Stop
           $defenderEnabled = [bool]$defender.AntivirusEnabled
           $defenderRealtime = [bool]$defender.RealTimeProtectionEnabled
 
@@ -88,7 +126,7 @@
 
         try {
           $firewallProfiles = @(
-            Get-NetFirewallProfile | ForEach-Object {
+            Get-NetFirewallProfile -ErrorAction Stop | ForEach-Object {
               [pscustomobject]@{
                 name = $_.Name.ToString()
                 enabled = [bool]$_.Enabled
@@ -114,18 +152,6 @@
         }
 
         [pscustomobject]@{
-          hostname = $env:COMPUTERNAME
-          os = $os.Caption
-          os_version = $os.Version
-          manufacturer = $computer.Manufacturer
-          model = $computer.Model
-          cpu_percent = $cpu
-          memory_total_gb = [math]::Round($os.TotalVisibleMemorySize / 1MB, 1)
-          memory_used_percent = $memoryUsed
-          uptime_days = [math]::Round($uptime.TotalDays, 1)
-          last_boot = $os.LastBootUpTime.ToString('yyyy-MM-dd HH:mm:ss')
-          stopped_automatic_services = $stoppedAutomatic
-          disks = $disks
           defender_enabled = $defenderEnabled
           defender_realtime_enabled = $defenderRealtime
           defender_status = $defenderStatus
@@ -135,26 +161,38 @@
           firewall_status = $firewallStatus
           firewall_profiles = $firewallProfiles
           firewall_error = $firewallError
-          collected_at = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
         } | ConvertTo-Json -Depth 5 -Compress
-      register: heartbeat_raw
+      register: heartbeat_security_raw
       changed_when: false
       failed_when: false
-      when: heartbeat_reachable
+      when: heartbeat_collection_ok
 
-    - name: Normalizar dados coletados
+    - name: Adicionar Defender e Firewall aos dados coletados
       ansible.builtin.set_fact:
-        heartbeat_collection_ok: >-
-          {{ heartbeat_reachable and
-             (heartbeat_raw.rc | default(1) == 0) and
-             (heartbeat_raw.stdout | default('') | length > 0) }}
-        heartbeat_data: >-
-          {{ (heartbeat_raw.stdout | from_json)
-             if (heartbeat_reachable and
-                 (heartbeat_raw.rc | default(1) == 0) and
-                 (heartbeat_raw.stdout | default('') | length > 0))
-             else {} }}
+        heartbeat_security_data: >-
+          {{ (heartbeat_security_raw.stdout | from_json)
+             if ((heartbeat_security_raw.rc | default(1) == 0) and
+                 (heartbeat_security_raw.stdout | default('') | length > 0))
+             else {
+               'defender_enabled': none,
+               'defender_realtime_enabled': none,
+               'defender_status': 'Indisponivel',
+               'defender_signature_age_days': none,
+               'defender_error': 'Falha ao consultar',
+               'firewall_all_enabled': none,
+               'firewall_status': 'Indisponivel',
+               'firewall_profiles': [],
+               'firewall_error': 'Falha ao consultar'
+             } }}
       delegate_to: localhost
+      when: heartbeat_collection_ok
+
+    - name: Mesclar Defender e Firewall no relatorio do host
+      ansible.builtin.set_fact:
+        heartbeat_data: >-
+          {{ heartbeat_data | combine(heartbeat_security_data, recursive=true) }}
+      delegate_to: localhost
+      when: heartbeat_collection_ok
 
 - name: Gerar e enviar relatorio consolidado
   hosts: localhost
