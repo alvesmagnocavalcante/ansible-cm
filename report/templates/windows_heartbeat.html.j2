@@ -58,43 +58,6 @@
         <th>Coletado em</th>
         <td>{{ d.collected_at }}</td>
       </tr>
-      <tr>
-        <th>Lista de servicos parados</th>
-        <td colspan="3" class="{{ 'warning' if d.stopped_automatic_services | int > 0 else 'ok' }}">
-          {% for svc in d.stopped_automatic_service_list | default([], true) %}
-            {{ svc.display_name }} ({{ svc.name }})
-            {% if not loop.last %}<br>{% endif %}
-          {% else %}
-            Nenhum servico automatico parado
-          {% endfor %}
-        </td>
-      </tr>
-    </table>
-
-    <table>
-      <tr>
-        <th colspan="4">Servicos automaticos</th>
-      </tr>
-      <tr>
-        <th>Servico</th>
-        <th>Nome exibido</th>
-        <th>Inicio</th>
-        <th>Status</th>
-      </tr>
-      {% for svc in d.automatic_services | default([], true) %}
-      <tr>
-        <td>{{ svc.name }}</td>
-        <td>{{ svc.display_name }}</td>
-        <td>{{ svc.start_mode }}</td>
-        <td class="{{ 'ok' if svc.state == 'Running' else 'critical' }}">
-          {{ 'Ativo' if svc.state == 'Running' else svc.state }}
-        </td>
-      </tr>
-      {% else %}
-      <tr>
-        <td colspan="4">Indisponivel</td>
-      </tr>
-      {% endfor %}
     </table>
 
     <table>
