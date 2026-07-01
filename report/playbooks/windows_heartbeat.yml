@@ -50,27 +50,9 @@
           }
         )
 
-        $automaticServices = @(
-          Get-CimInstance Win32_Service | Where-Object {
-            $_.StartMode -eq 'Auto'
-          } | Sort-Object DisplayName | ForEach-Object {
-            [pscustomobject]@{
-              name = $_.Name
-              display_name = $_.DisplayName
-              state = $_.State
-              status = $_.Status
-              start_mode = $_.StartMode
-            }
-          }
-        )
-
-        $stoppedAutomaticServices = @(
-          $automaticServices | Where-Object {
-            $_.state -ne 'Running'
-          }
-        )
-
-        $stoppedAutomatic = $stoppedAutomaticServices.Count
+        $stoppedAutomatic = @(Get-CimInstance Win32_Service | Where-Object {
+          $_.StartMode -eq 'Auto' -and $_.State -ne 'Running'
+        }).Count
 
         [pscustomobject]@{
           hostname = $env:COMPUTERNAME
@@ -84,11 +66,9 @@
           uptime_days = [math]::Round($uptime.TotalDays, 1)
           last_boot = $os.LastBootUpTime.ToString('yyyy-MM-dd HH:mm:ss')
           stopped_automatic_services = $stoppedAutomatic
-          stopped_automatic_service_list = $stoppedAutomaticServices
-          automatic_services = $automaticServices
           disks = $disks
           collected_at = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
-        } | ConvertTo-Json -Depth 6 -Compress
+        } | ConvertTo-Json -Depth 5 -Compress
       register: heartbeat_raw
       changed_when: false
       failed_when: false
