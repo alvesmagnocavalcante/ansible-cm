@@ -10,8 +10,8 @@
     zabbix_server_port: 10051
     zabbix_hostname: "{{ inventory_hostname }}"
 
-    # Se true, o playbook falha caso o host não conecte no Zabbix Server:10051.
-    # Recomendado deixar false para não quebrar a instalação por problema de rede/firewall/VPN.
+    # Se true, o playbook falha caso o host nao conecte no Zabbix Server:10051.
+    # Recomendado deixar false para nao quebrar a instalacao por problema de rede/firewall/VPN.
     zabbix_fail_if_no_server_connection: false
 
     zabbix_msi_url: "https://cdn.zabbix.com/zabbix/binaries/stable/7.4/7.4.11/zabbix_agent2-7.4.11-windows-amd64-openssl.msi"
