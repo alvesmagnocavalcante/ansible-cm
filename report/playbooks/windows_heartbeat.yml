@@ -13,6 +13,8 @@
       run_once: true
       changed_when: false
 
+    # O modulo raw executa diretamente pela conexao WinRM e nao transfere uma
+    # biblioteca de modulo Ansible ao host remoto.
     - name: Verificar conectividade WinRM sem copiar arquivos
       ansible.builtin.raw: "Write-Output '__HEARTBEAT_OK__'"
       register: heartbeat_ping
@@ -23,6 +25,7 @@
       ansible.builtin.set_fact:
         heartbeat_reachable: >-
           {{ '__HEARTBEAT_OK__' in (heartbeat_ping.stdout | default('')) }}
+      delegate_to: localhost
 
     - name: Consultar metricas somente leitura via PowerShell e CIM
       ansible.builtin.raw: |
@@ -98,6 +101,7 @@
           if ($firewallProfiles.Count -gt 0) {
             $disabledProfiles = @($firewallProfiles | Where-Object { -not $_.enabled })
             $firewallAllEnabled = ($disabledProfiles.Count -eq 0)
+
             if ($firewallAllEnabled) {
               $firewallStatus = "Ativo"
             } else {
@@ -150,6 +154,7 @@
                  (heartbeat_raw.rc | default(1) == 0) and
                  (heartbeat_raw.stdout | default('') | length > 0))
              else {} }}
+      delegate_to: localhost
 
 - name: Gerar e enviar relatorio consolidado
   hosts: localhost
@@ -193,7 +198,7 @@
       loop_control:
         label: "{{ item }}"
 
-    - name: Identificar hosts com alertas de recursos
+    - name: Identificar hosts com alertas
       ansible.builtin.set_fact:
         heartbeat_alert_hosts: "{{ heartbeat_alert_hosts + [item] }}"
       loop: "{{ heartbeat_online_hosts }}"
@@ -206,9 +211,9 @@
         ((current_data.memory_used_percent | default(0, true) | float) >= (memory_warning_percent | float)) or
         ((current_data.stopped_automatic_services | default(0, true) | int) > 0) or
         ((current_data.disks | default([], true) |
-          selectattr('free_percent', 'le', disk_warning_percent) | list | length) > 0)
+         selectattr('free_percent', 'le', disk_warning_percent) | list | length) > 0)
 
-    - name: Identificar hosts com Windows Defender desativado
+    - name: Identificar hosts com Defender ou Firewall desativado
       ansible.builtin.set_fact:
         heartbeat_defender_alert_hosts: "{{ heartbeat_defender_alert_hosts + [item] }}"
       loop: "{{ heartbeat_online_hosts }}"
@@ -219,7 +224,9 @@
       when: >-
         ((current_data.defender_enabled | default(true, true)) == false) or
         ((current_data.defender_realtime_enabled | default(true, true)) == false) or
-        ((current_data.defender_error | default('', true) | string | length) > 0)
+        ((current_data.firewall_all_enabled | default(true, true)) == false) or
+        ((current_data.defender_error | default('', true) | string | length) > 0) or
+        ((current_data.firewall_error | default('', true) | string | length) > 0)
 
     - name: Exibir status de Defender e Firewall
       ansible.builtin.debug:
@@ -239,8 +246,8 @@
           Total={{ heartbeat_hosts | length }},
           online={{ heartbeat_online_hosts | length }},
           offline={{ heartbeat_offline_hosts | length }},
-          alertas_recursos={{ heartbeat_alert_hosts | length }},
-          alertas_defender={{ heartbeat_defender_alert_hosts | length }}.
+          alertas={{ heartbeat_alert_hosts | length }},
+          alertas_defender_firewall={{ heartbeat_defender_alert_hosts | length }}.
 
     - name: Gerar relatorio HTML somente em memoria
       ansible.builtin.set_fact:
