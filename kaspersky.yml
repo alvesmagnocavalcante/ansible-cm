@@ -1,42 +1,104 @@
 ---
-- name: Verificar instalação do Kaspersky Endpoint Security no Windows
-  hosts: windows_hosts
+- name: Desinstalar Kaspersky em hosts Windows
+  hosts: "{{ kaspersky_target_group | default('windows') }}"
   gather_facts: false
 
+  vars:
+    # Ajuste no Semaphore/AWX/linha de comando se seu grupo tiver outro nome:
+    # ansible-playbook desinstalar_kaspersky_windows.yml -e "kaspersky_target_group=servidores_windows"
+    kaspersky_target_group: windows
+
+    # Padrao seguro para MSI: silencioso e sem reiniciar automaticamente.
+    # Se o Kaspersky exigir senha, informe os argumentos exigidos pelo seu pacote.
+    # Exemplo:
+    # kaspersky_uninstall_arguments: "/qn /norestart KLLOGIN=admin KLPASSWD='SENHA'"
+    kaspersky_uninstall_arguments: "/qn /norestart"
+
   tasks:
-    - name: Buscar Kaspersky Endpoint Security nos registros do Windows
+    - name: Localizar produtos Kaspersky instalados
       ansible.windows.win_shell: |
-        $ErrorActionPreference = "Stop"
         $paths = @(
-          "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
-          "HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+          'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+          'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
         )
 
-        # Âncora no início do nome evita falso-positivo com variantes
-        # (ex: "Kaspersky Endpoint Security Cloud Console")
-        $kes = Get-ItemProperty $paths -ErrorAction SilentlyContinue |
-          Where-Object { $_.DisplayName -match "^Kaspersky Endpoint Security( for Windows)?( \(64-bit\))?$" } |
-          Select-Object -First 1
-
-        $result = [PSCustomObject]@{
-          installed   = [bool]$kes
-          displayName = $kes.DisplayName
-          version     = $kes.DisplayVersion
+        $products = foreach ($path in $paths) {
+          Get-ItemProperty -Path $path -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -match 'Kaspersky' } |
+            ForEach-Object {
+              [PSCustomObject]@{
+                name = $_.DisplayName
+                version = $_.DisplayVersion
+                publisher = $_.Publisher
+                product_id = $_.PSChildName
+                uninstall_string = $_.UninstallString
+                is_msi = ($_.WindowsInstaller -eq 1 -or $_.PSChildName -match '^\{[0-9A-Fa-f-]{36}\}$')
+              }
+            }
         }
-        $result | ConvertTo-Json -Compress
-      register: kes_raw
+
+        ConvertTo-Json -InputObject @($products) -Compress
       changed_when: false
+      register: kaspersky_registry
 
-    - name: Parsear resultado
+    - name: Preparar lista de produtos encontrados
       ansible.builtin.set_fact:
-        kes_status: "{{ kes_raw.stdout | from_json }}"
+        kaspersky_products: "{{ (kaspersky_registry.stdout | default('[]') | from_json) if (kaspersky_registry.stdout | default('') | trim) else [] }}"
 
-    - name: Alertar se o KES foi ENCONTRADO
+    - name: Informar quando o Kaspersky nao estiver instalado
       ansible.builtin.debug:
-        msg: "✅ INSTALADO em {{ inventory_hostname }} — {{ kes_status.displayName }} (v{{ kes_status.version }})"
-      when: kes_status.installed
+        msg: "Nenhum produto Kaspersky encontrado neste host."
+      when: kaspersky_products | length == 0
 
-    - name: Alertar se o KES NÃO foi encontrado
+    - name: Exibir produtos Kaspersky encontrados
       ansible.builtin.debug:
-        msg: "❌ AUSENTE em {{ inventory_hostname }}"
-      when: not kes_status.installed
+        msg: "Encontrado: {{ item.name }} {{ item.version | default('') }} - Product ID: {{ item.product_id }}"
+      loop: "{{ kaspersky_products }}"
+      when: kaspersky_products | length > 0
+
+    - name: Desinstalar produtos Kaspersky MSI
+      ansible.windows.win_package:
+        product_id: "{{ item.product_id }}"
+        state: absent
+        arguments: "{{ kaspersky_uninstall_arguments }}"
+      loop: "{{ kaspersky_products }}"
+      when:
+        - kaspersky_products | length > 0
+        - item.is_msi | bool
+
+    - name: Avisar produtos nao MSI que exigem tratamento manual
+      ansible.builtin.debug:
+        msg: >-
+          O produto '{{ item.name }}' foi encontrado, mas nao parece ter Product ID MSI.
+          UninstallString encontrado: {{ item.uninstall_string | default('nao informado') }}.
+          Para esse caso, sera necessario adaptar a playbook com o comando silencioso do instalador.
+      loop: "{{ kaspersky_products }}"
+      when:
+        - kaspersky_products | length > 0
+        - not (item.is_msi | bool)
+
+    - name: Verificar Kaspersky apos tentativa de desinstalacao
+      ansible.windows.win_shell: |
+        $paths = @(
+          'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+          'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+        )
+
+        $remaining = foreach ($path in $paths) {
+          Get-ItemProperty -Path $path -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -match 'Kaspersky' } |
+            Select-Object DisplayName, DisplayVersion
+        }
+
+        ConvertTo-Json -InputObject @($remaining) -Compress
+      changed_when: false
+      register: kaspersky_after
+
+    - name: Resultado final
+      ansible.builtin.debug:
+        msg: >-
+          {{
+            'Kaspersky nao encontrado apos a execucao.'
+            if ((kaspersky_after.stdout | default('') | trim) in ['', '[]'])
+            else 'Ainda existe produto Kaspersky instalado: ' ~ kaspersky_after.stdout
+          }}
