@@ -1,511 +1,268 @@
 <!doctype html>
 <html lang="pt-BR">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Status dos Servidores e VMs Windows</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <style>
-    :root {
-      --bg: #0a0d12;
-      --bg-panel: #12161d;
-      --bg-panel-2: #171c24;
-      --border: #232a35;
-      --border-soft: #1b2129;
-      --text: #e7ecf3;
-      --text-muted: #7c8aa0;
-      --text-dim: #4d5a6e;
-      --accent: #4fd1c5;
-      --accent-dim: #1f4d49;
-      --ok: #3ddc97;
-      --ok-bg: rgba(61, 220, 151, 0.12);
-      --warning: #f5b94d;
-      --warning-bg: rgba(245, 185, 77, 0.12);
-      --critical: #f2646b;
-      --critical-bg: rgba(242, 100, 107, 0.13);
-      --font-display: 'Space Grotesk', 'Segoe UI', Arial, sans-serif;
-      --font-body: 'Inter', 'Segoe UI', Arial, sans-serif;
-      --font-mono: 'JetBrains Mono', 'Consolas', monospace;
-    }
-
-    * { box-sizing: border-box; }
-
-    body {
-      font-family: var(--font-body);
-      background:
-        radial-gradient(1200px 500px at 15% -10%, rgba(79, 209, 197, 0.07), transparent 60%),
-        var(--bg);
-      color: var(--text);
-      margin: 0;
-      padding: 32px clamp(16px, 4vw, 48px) 64px;
-      line-height: 1.5;
-    }
-
-    /* ---------- Header ---------- */
-    .page-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-end;
-      flex-wrap: wrap;
-      gap: 12px;
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 20px;
-      margin-bottom: 24px;
-    }
-
-    h1 {
-      font-family: var(--font-display);
-      font-weight: 700;
-      font-size: 26px;
-      letter-spacing: -0.01em;
-      margin: 0 0 4px;
-      color: var(--text);
-    }
-
-    .eyebrow {
-      font-family: var(--font-mono);
-      font-size: 11px;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-      color: var(--accent);
-      margin: 0 0 6px;
-    }
-
-    .muted {
-      color: var(--text-muted);
-      font-size: 13px;
-      font-family: var(--font-mono);
-    }
-
-    /* ---------- Summary strip ---------- */
-    .summary {
-      display: grid;
-      grid-template-columns: repeat(4, minmax(140px, 1fr));
-      gap: 12px;
-      margin: 0 0 32px;
-    }
-
-    .stat {
-      background: var(--bg-panel);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 16px 18px;
-      position: relative;
-      overflow: hidden;
-    }
-
-    .stat::before {
-      content: '';
-      position: absolute;
-      top: 0; left: 0;
-      width: 3px;
-      height: 100%;
-      background: var(--stat-color, var(--text-dim));
-    }
-
-    .stat .num {
-      font-family: var(--font-display);
-      font-size: 30px;
-      font-weight: 700;
-      color: var(--stat-color, var(--text));
-      display: block;
-      line-height: 1;
-    }
-
-    .stat .label {
-      font-size: 12px;
-      color: var(--text-muted);
-      margin-top: 6px;
-      display: block;
-    }
-
-    .stat.stat-ok { --stat-color: var(--ok); }
-    .stat.stat-critical { --stat-color: var(--critical); }
-    .stat.stat-warning { --stat-color: var(--warning); }
-
-    /* ---------- Host grid ---------- */
-    .host-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
-      gap: 18px;
-    }
-
-    .host-card {
-      background: var(--bg-panel);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 20px 22px 22px;
-    }
-
-    .host-card.offline {
-      border: 1px dashed rgba(242, 100, 107, 0.45);
-      background: linear-gradient(180deg, rgba(242, 100, 107, 0.05), transparent 40%), var(--bg-panel);
-    }
-
-    .host-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      margin-bottom: 14px;
-    }
-
-    .host-name {
-      font-family: var(--font-display);
-      font-weight: 600;
-      font-size: 17px;
-      margin: 0;
-    }
-
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-family: var(--font-mono);
-      font-size: 11px;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      padding: 4px 9px;
-      border-radius: 999px;
-      white-space: nowrap;
-    }
-
-    .pill.ok { color: var(--ok); background: var(--ok-bg); }
-    .pill.warning { color: var(--warning); background: var(--warning-bg); }
-    .pill.critical { color: var(--critical); background: var(--critical-bg); }
-
-    .dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: currentColor;
-      flex: none;
-    }
-
-    @media (prefers-reduced-motion: no-preference) {
-      .pill.ok .dot {
-        animation: pulse 2s ease-in-out infinite;
-      }
-    }
-
-    @keyframes pulse {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(61, 220, 151, 0.5); }
-      50% { box-shadow: 0 0 0 4px rgba(61, 220, 151, 0); }
-    }
-
-    /* ---------- Info grid inside card ---------- */
-    .info-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px 20px;
-      margin-bottom: 16px;
-      font-size: 13px;
-    }
-
-    .info-grid dt {
-      color: var(--text-muted);
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      margin: 0 0 2px;
-    }
-
-    .info-grid dd {
-      margin: 0 0 10px;
-      font-family: var(--font-mono);
-      font-size: 13px;
-      color: var(--text);
-    }
-
-    /* ---------- Gauges ---------- */
-    .gauge-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 14px;
-      margin-bottom: 16px;
-    }
-
-    .gauge-label {
-      display: flex;
-      justify-content: space-between;
-      font-size: 12px;
-      color: var(--text-muted);
-      margin-bottom: 5px;
-    }
-
-    .gauge-label .value {
-      font-family: var(--font-mono);
-      color: var(--text);
-      font-weight: 500;
-    }
-
-    .gauge-track {
-      background: var(--bg-panel-2);
-      border: 1px solid var(--border-soft);
-      border-radius: 999px;
-      height: 7px;
-      overflow: hidden;
-    }
-
-    .gauge-fill {
-      height: 100%;
-      border-radius: 999px;
-      background: var(--ok);
-    }
-
-    .gauge-fill.critical { background: var(--critical); }
-
-    /* ---------- Section divider ---------- */
-    .section-title {
-      font-family: var(--font-mono);
-      font-size: 10.5px;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--text-dim);
-      margin: 16px 0 8px;
-      padding-top: 12px;
-      border-top: 1px solid var(--border-soft);
-    }
-
-    .section-title:first-of-type {
-      border-top: none;
-      padding-top: 0;
-      margin-top: 0;
-    }
-
-    /* ---------- Security row ---------- */
-    .security-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-bottom: 4px;
-    }
-
-    .security-detail {
-      font-size: 12px;
-      color: var(--text-muted);
-      margin: 6px 0 0;
-      font-family: var(--font-mono);
-    }
-
-    .fw-profiles {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-top: 8px;
-    }
-
-    .fw-chip {
-      font-family: var(--font-mono);
-      font-size: 11px;
-      padding: 3px 8px;
-      border-radius: 6px;
-      border: 1px solid var(--border);
-      color: var(--text-muted);
-    }
-
-    .fw-chip.on { color: var(--ok); border-color: var(--accent-dim); }
-    .fw-chip.off { color: var(--critical); border-color: rgba(242, 100, 107, 0.3); }
-
-    /* ---------- Disks ---------- */
-    .disk-list {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-    }
-
-    .disk-row {
-      display: grid;
-      grid-template-columns: 46px 1fr 90px;
-      align-items: center;
-      gap: 12px;
-      font-size: 12px;
-    }
-
-    .disk-drive {
-      font-family: var(--font-mono);
-      font-weight: 600;
-      color: var(--text);
-    }
-
-    .disk-meta {
-      text-align: right;
-      font-family: var(--font-mono);
-      color: var(--text-muted);
-      white-space: nowrap;
-    }
-
-    .disk-meta .pct.critical { color: var(--critical); }
-    .disk-meta .pct.ok { color: var(--ok); }
-
-    /* ---------- Offline card ---------- */
-    .offline-body {
-      font-size: 13px;
-      color: var(--text-muted);
-    }
-
-    .offline-body .addr {
-      font-family: var(--font-mono);
-      color: var(--text);
-    }
-
-    @media (max-width: 720px) {
-      .summary { grid-template-columns: repeat(2, 1fr); }
-      .host-grid { grid-template-columns: 1fr; }
-      .info-grid, .gauge-row { grid-template-columns: 1fr; }
-    }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="x-apple-disable-message-reformatting">
+<title>Status dos Servidores e VMs Windows</title>
+<style>
+  body { margin:0; padding:0; background-color:#eef1f5; }
+  table { border-collapse:collapse; }
+  td { font-family:Arial, Helvetica, sans-serif; }
+  img { border:0; }
+  @media only screen and (max-width:600px) {
+    .stack-col { display:block !important; width:100% !important; }
+    .container { width:100% !important; }
+  }
+</style>
 </head>
-<body>
+<body style="margin:0; padding:0; background-color:#eef1f5;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef1f5;">
+<tr>
+<td align="center" style="padding:24px 12px;">
 
-  <div class="page-header">
-    <div>
-      <p class="eyebrow">Monitoramento de infraestrutura</p>
-      <h1>Status dos Servidores e VMs Windows</h1>
-    </div>
-    <div class="muted">Gerado em {{ ansible_facts['date_time']['date'] }} {{ ansible_facts['date_time']['time'] }} (controlador)</div>
-  </div>
+<table role="presentation" width="640" class="container" cellpadding="0" cellspacing="0" style="width:640px; max-width:640px;">
 
-  <div class="summary">
-    <div class="stat stat-ok">
-      <span class="num">{{ heartbeat_online_hosts | length }}</span>
-      <span class="label">online</span>
-    </div>
-    <div class="stat stat-critical">
-      <span class="num">{{ heartbeat_offline_hosts | length }}</span>
-      <span class="label">offline / sem coleta</span>
-    </div>
-    <div class="stat stat-warning">
-      <span class="num">{{ heartbeat_alert_hosts | length }}</span>
-      <span class="label">com alertas</span>
-    </div>
-    <div class="stat stat-warning">
-      <span class="num">{{ heartbeat_defender_alert_hosts | length }}</span>
-      <span class="label">alertas Defender/Firewall</span>
-    </div>
-  </div>
+  <!-- Header -->
+  <tr>
+    <td style="padding:4px 4px 18px;">
+      <div style="font-family:'Courier New', Courier, monospace; font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#0f766e; font-weight:bold;">Monitoramento de infraestrutura</div>
+      <div style="font-family:Arial, Helvetica, sans-serif; font-size:22px; font-weight:bold; color:#1c2733; padding-top:2px;">Status dos Servidores e VMs Windows</div>
+      <div style="font-family:'Courier New', Courier, monospace; font-size:12px; color:#667085; padding-top:6px;">Gerado em {{ ansible_facts['date_time']['date'] }} {{ ansible_facts['date_time']['time'] }} (controlador)</div>
+    </td>
+  </tr>
 
-  <div class="host-grid">
-  {% for host in heartbeat_hosts %}
-    {% if hostvars[host].heartbeat_collection_ok | default(false) %}
-      {% set d = hostvars[host].heartbeat_data %}
-      <article class="host-card">
-        <div class="host-head">
-          <h2 class="host-name">{{ d.hostname | default(host) }}</h2>
-          <span class="pill ok"><span class="dot"></span>Online</span>
-        </div>
+  <!-- Summary stats -->
+  <tr>
+    <td style="padding-bottom:20px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td width="25%" class="stack-col" style="padding:4px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff; border:1px solid #dde3ea; border-left:3px solid #0f9d6b;">
+              <tr><td style="padding:12px 14px;">
+                <div style="font-family:Arial; font-size:24px; font-weight:bold; color:#0f9d6b;">{{ heartbeat_online_hosts | length }}</div>
+                <div style="font-family:Arial; font-size:11px; color:#667085; padding-top:2px;">online</div>
+              </td></tr>
+            </table>
+          </td>
+          <td width="25%" class="stack-col" style="padding:4px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff; border:1px solid #dde3ea; border-left:3px solid #c0392b;">
+              <tr><td style="padding:12px 14px;">
+                <div style="font-family:Arial; font-size:24px; font-weight:bold; color:#c0392b;">{{ heartbeat_offline_hosts | length }}</div>
+                <div style="font-family:Arial; font-size:11px; color:#667085; padding-top:2px;">offline / sem coleta</div>
+              </td></tr>
+            </table>
+          </td>
+          <td width="25%" class="stack-col" style="padding:4px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff; border:1px solid #dde3ea; border-left:3px solid #b8860b;">
+              <tr><td style="padding:12px 14px;">
+                <div style="font-family:Arial; font-size:24px; font-weight:bold; color:#b8860b;">{{ heartbeat_alert_hosts | length }}</div>
+                <div style="font-family:Arial; font-size:11px; color:#667085; padding-top:2px;">com alertas</div>
+              </td></tr>
+            </table>
+          </td>
+          <td width="25%" class="stack-col" style="padding:4px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff; border:1px solid #dde3ea; border-left:3px solid #b8860b;">
+              <tr><td style="padding:12px 14px;">
+                <div style="font-family:Arial; font-size:24px; font-weight:bold; color:#b8860b;">{{ heartbeat_defender_alert_hosts | length }}</div>
+                <div style="font-family:Arial; font-size:11px; color:#667085; padding-top:2px;">alertas Defender/Firewall</div>
+              </td></tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
 
-        <p class="section-title">Sistema</p>
-        <dl class="info-grid">
-          <div>
-            <dt>Endereco</dt>
-            <dd>{{ hostvars[host].ansible_host | default(host) }}</dd>
-          </div>
-          <div>
-            <dt>Sistema</dt>
-            <dd>{{ d.os }} {{ d.os_version }}</dd>
-          </div>
-          <div>
-            <dt>Fabricante / modelo</dt>
-            <dd>{{ d.manufacturer }} / {{ d.model }}</dd>
-          </div>
-          <div>
-            <dt>Uptime</dt>
-            <dd>{{ d.uptime_days }} dias (boot: {{ d.last_boot }})</dd>
-          </div>
-          <div>
-            <dt>Servicos automaticos parados</dt>
-            <dd>
-              <span class="pill {{ 'warning' if d.stopped_automatic_services | int > 0 else 'ok' }}">{{ d.stopped_automatic_services }}</span>
-            </dd>
-          </div>
-          <div>
-            <dt>Coletado em</dt>
-            <dd>{{ d.collected_at }}</dd>
-          </div>
-        </dl>
+  <!-- Host cards -->
+{% for host in heartbeat_hosts %}
+  {% if hostvars[host].heartbeat_collection_ok | default(false) %}
+    {% set d = hostvars[host].heartbeat_data %}
+  <tr>
+    <td style="padding-bottom:14px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff; border:1px solid #dde3ea;">
 
-        <p class="section-title">Utilizacao</p>
-        <div class="gauge-row">
-          <div>
-            <div class="gauge-label">
-              <span>CPU</span>
-              <span class="value">{{ d.cpu_percent }}%</span>
+        <!-- card header -->
+        <tr>
+          <td style="padding:14px 18px; border-bottom:1px solid #eef1f5;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="font-family:Arial; font-size:16px; font-weight:bold; color:#1c2733;">{{ d.hostname | default(host) }}</td>
+                <td align="right">
+                  <span style="display:inline-block; padding:3px 10px; background:#e6f6ee; color:#0f9d6b; font-family:Arial; font-size:11px; font-weight:bold;">&#9679; ONLINE</span>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- system info -->
+        <tr>
+          <td style="padding:14px 18px 4px;">
+            <div style="font-family:'Courier New', Courier, monospace; font-size:10.5px; letter-spacing:1px; text-transform:uppercase; color:#98a4b3; padding-bottom:6px;">Sistema</div>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-family:Arial; font-size:13px; color:#1c2733;">
+              <tr>
+                <td width="50%" style="padding:3px 8px 9px 0; vertical-align:top;">
+                  <div style="font-size:11px; color:#667085;">Endereco</div>
+                  <div style="font-family:'Courier New', Courier, monospace;">{{ hostvars[host].ansible_host | default(host) }}</div>
+                </td>
+                <td width="50%" style="padding:3px 0 9px 8px; vertical-align:top;">
+                  <div style="font-size:11px; color:#667085;">Sistema</div>
+                  <div>{{ d.os }} {{ d.os_version }}</div>
+                </td>
+              </tr>
+              <tr>
+                <td width="50%" style="padding:3px 8px 9px 0; vertical-align:top;">
+                  <div style="font-size:11px; color:#667085;">Fabricante / modelo</div>
+                  <div>{{ d.manufacturer }} / {{ d.model }}</div>
+                </td>
+                <td width="50%" style="padding:3px 0 9px 8px; vertical-align:top;">
+                  <div style="font-size:11px; color:#667085;">Uptime</div>
+                  <div>{{ d.uptime_days }} dias (boot: {{ d.last_boot }})</div>
+                </td>
+              </tr>
+              <tr>
+                <td width="50%" style="padding:3px 8px 9px 0; vertical-align:top;">
+                  <div style="font-size:11px; color:#667085;">Servicos automaticos parados</div>
+                  <div>
+                    <span style="display:inline-block; padding:1px 8px; background:{{ '#fef6e7' if d.stopped_automatic_services | int > 0 else '#e6f6ee' }}; color:{{ '#b8860b' if d.stopped_automatic_services | int > 0 else '#0f9d6b' }}; font-family:Arial; font-size:12px; font-weight:bold;">{{ d.stopped_automatic_services }}</span>
+                  </div>
+                </td>
+                <td width="50%" style="padding:3px 0 9px 8px; vertical-align:top;">
+                  <div style="font-size:11px; color:#667085;">Coletado em</div>
+                  <div style="font-family:'Courier New', Courier, monospace;">{{ d.collected_at }}</div>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- utilization gauges -->
+        <tr>
+          <td style="padding:6px 18px 4px;">
+            <div style="font-family:'Courier New', Courier, monospace; font-size:10.5px; letter-spacing:1px; text-transform:uppercase; color:#98a4b3; padding-bottom:6px;">Utilizacao</div>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td width="50%" style="padding-right:8px; vertical-align:top;">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                    <tr>
+                      <td style="font-family:Arial; font-size:12px; color:#667085;">CPU</td>
+                      <td align="right" style="font-family:'Courier New', Courier, monospace; font-size:12px; color:#1c2733;">{{ d.cpu_percent }}%</td>
+                    </tr>
+                  </table>
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef1f5; margin-top:4px;">
+                    <tr>
+                      <td width="{{ d.cpu_percent }}%" style="background:{{ '#c0392b' if d.cpu_percent | float >= cpu_warning_percent else '#0f766e' }}; line-height:7px; font-size:1px;">&nbsp;</td>
+                      <td style="line-height:7px; font-size:1px;">&nbsp;</td>
+                    </tr>
+                  </table>
+                </td>
+                <td width="50%" style="padding-left:8px; vertical-align:top;">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                    <tr>
+                      <td style="font-family:Arial; font-size:12px; color:#667085;">Memoria</td>
+                      <td align="right" style="font-family:'Courier New', Courier, monospace; font-size:12px; color:#1c2733;">{{ d.memory_used_percent }}% de {{ d.memory_total_gb }} GB</td>
+                    </tr>
+                  </table>
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef1f5; margin-top:4px;">
+                    <tr>
+                      <td width="{{ d.memory_used_percent }}%" style="background:{{ '#c0392b' if d.memory_used_percent | float >= memory_warning_percent else '#0f766e' }}; line-height:7px; font-size:1px;">&nbsp;</td>
+                      <td style="line-height:7px; font-size:1px;">&nbsp;</td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <!-- security -->
+        <tr>
+          <td style="padding:10px 18px 4px;">
+            <div style="font-family:'Courier New', Courier, monospace; font-size:10.5px; letter-spacing:1px; text-transform:uppercase; color:#98a4b3; padding-bottom:6px;">Seguranca</div>
+            <span style="display:inline-block; padding:3px 9px; margin:0 6px 6px 0; background:{{ '#e6f6ee' if d.defender_status | default('') == 'Ativo' else '#fdecec' }}; color:{{ '#0f9d6b' if d.defender_status | default('') == 'Ativo' else '#c0392b' }}; font-family:Arial; font-size:11px; font-weight:bold;">&#9679; Defender: {{ d.defender_status | default('Indisponivel', true) }}</span>
+            <span style="display:inline-block; padding:3px 9px; margin:0 6px 6px 0; background:{{ '#e6f6ee' if d.defender_realtime_enabled | default(false, true) else '#fdecec' }}; color:{{ '#0f9d6b' if d.defender_realtime_enabled | default(false, true) else '#c0392b' }}; font-family:Arial; font-size:11px; font-weight:bold;">&#9679; Tempo real: {{ 'Ativo' if d.defender_realtime_enabled | default(false, true) else 'Desativado' }}</span>
+            <span style="display:inline-block; padding:3px 9px; margin:0 6px 6px 0; background:{{ '#e6f6ee' if d.firewall_all_enabled | default(false, true) else '#fdecec' }}; color:{{ '#0f9d6b' if d.firewall_all_enabled | default(false, true) else '#c0392b' }}; font-family:Arial; font-size:11px; font-weight:bold;">&#9679; Firewall: {{ d.firewall_status | default('Indisponivel', true) }}</span>
+
+            <div style="font-family:'Courier New', Courier, monospace; font-size:11.5px; color:#667085; padding-top:6px;">
+              Assinatura Defender: {{ d.defender_signature_age_days | default('-', true) }} dias &middot; Erro Defender: {{ d.defender_error | default('-', true) }} &middot; Erro Firewall: {{ d.firewall_error | default('-', true) }}
             </div>
-            <div class="gauge-track">
-              <div class="gauge-fill {{ 'critical' if d.cpu_percent | float >= cpu_warning_percent else '' }}" style="width: {{ d.cpu_percent }}%;"></div>
-            </div>
-          </div>
-          <div>
-            <div class="gauge-label">
-              <span>Memoria</span>
-              <span class="value">{{ d.memory_used_percent }}% de {{ d.memory_total_gb }} GB</span>
-            </div>
-            <div class="gauge-track">
-              <div class="gauge-fill {{ 'critical' if d.memory_used_percent | float >= memory_warning_percent else '' }}" style="width: {{ d.memory_used_percent }}%;"></div>
-            </div>
-          </div>
-        </div>
 
-        <p class="section-title">Seguranca</p>
-        <div class="security-row">
-          <span class="pill {{ 'ok' if d.defender_status | default('') == 'Ativo' else 'critical' }}">
-            <span class="dot"></span>Defender: {{ d.defender_status | default('Indisponivel', true) }}
-          </span>
-          <span class="pill {{ 'ok' if d.defender_realtime_enabled | default(false, true) else 'critical' }}">
-            <span class="dot"></span>Tempo real: {{ 'Ativo' if d.defender_realtime_enabled | default(false, true) else 'Desativado' }}
-          </span>
-          <span class="pill {{ 'ok' if d.firewall_all_enabled | default(false, true) else 'critical' }}">
-            <span class="dot"></span>Firewall: {{ d.firewall_status | default('Indisponivel', true) }}
-          </span>
-        </div>
-        <p class="security-detail">
-          Assinatura Defender: {{ d.defender_signature_age_days | default('-', true) }} dias
-          {% if d.defender_error | default('-', true) != '-' %} &middot; Erro Defender: {{ d.defender_error }}{% endif %}
-          {% if d.firewall_error | default('-', true) != '-' %} &middot; Erro Firewall: {{ d.firewall_error }}{% endif %}
-        </p>
-        <div class="fw-profiles">
-          {% for profile in d.firewall_profiles | default([], true) %}
-            <span class="fw-chip {{ 'on' if profile.enabled else 'off' }}">{{ profile.name }}: {{ 'Ativo' if profile.enabled else 'Desativado' }}</span>
-          {% else %}
-            <span class="fw-chip">Perfis indisponiveis</span>
-          {% endfor %}
-        </div>
+            <div style="padding-top:8px;">
+              {% for profile in d.firewall_profiles | default([], true) %}
+                <span style="display:inline-block; padding:2px 8px; margin:0 6px 6px 0; border:1px solid {{ '#c7e8d9' if profile.enabled else '#f3caca' }}; color:{{ '#0f9d6b' if profile.enabled else '#c0392b' }}; font-family:'Courier New', Courier, monospace; font-size:11px;">{{ profile.name }}: {{ 'Ativo' if profile.enabled else 'Desativado' }}</span>
+              {% else %}
+                <span style="display:inline-block; padding:2px 8px; border:1px solid #dde3ea; color:#667085; font-family:'Courier New', Courier, monospace; font-size:11px;">Perfis indisponiveis</span>
+              {% endfor %}
+            </div>
+          </td>
+        </tr>
 
+        <!-- disks -->
         {% if d.disks | default([]) %}
-        <p class="section-title">Discos</p>
-        <div class="disk-list">
-          {% for disk in d.disks | default([]) %}
-          <div class="disk-row">
-            <span class="disk-drive">{{ disk.drive }}</span>
-            <div class="gauge-track">
-              <div class="gauge-fill {{ 'critical' if disk.free_percent | float <= disk_warning_percent else '' }}" style="width: {{ disk.free_percent }}%;"></div>
-            </div>
-            <span class="disk-meta">
-              {{ disk.free_gb }}/{{ disk.size_gb }} GB &middot;
-              <span class="pct {{ 'critical' if disk.free_percent | float <= disk_warning_percent else 'ok' }}">{{ disk.free_percent }}%</span>
-            </span>
-          </div>
-          {% endfor %}
-        </div>
+        <tr>
+          <td style="padding:10px 18px 16px;">
+            <div style="font-family:'Courier New', Courier, monospace; font-size:10.5px; letter-spacing:1px; text-transform:uppercase; color:#98a4b3; padding-bottom:6px;">Discos</div>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+              {% for disk in d.disks | default([]) %}
+              <tr>
+                <td width="34" style="font-family:Arial; font-size:12px; font-weight:bold; color:#1c2733; vertical-align:middle; padding:3px 8px 3px 0;">{{ disk.drive }}</td>
+                <td style="vertical-align:middle; padding:3px 0;">
+                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eef1f5;">
+                    <tr>
+                      <td width="{{ disk.free_percent }}%" style="background:{{ '#c0392b' if disk.free_percent | float <= disk_warning_percent else '#0f766e' }}; line-height:7px; font-size:1px;">&nbsp;</td>
+                      <td style="line-height:7px; font-size:1px;">&nbsp;</td>
+                    </tr>
+                  </table>
+                </td>
+                <td width="130" align="right" style="font-family:'Courier New', Courier, monospace; font-size:11.5px; color:{{ '#c0392b' if disk.free_percent | float <= disk_warning_percent else '#667085' }}; padding:3px 0 3px 8px; white-space:nowrap;">{{ disk.free_gb }}/{{ disk.size_gb }} GB &middot; {{ disk.free_percent }}%</td>
+              </tr>
+              {% endfor %}
+            </table>
+          </td>
+        </tr>
         {% endif %}
-      </article>
-    {% else %}
-      <article class="host-card offline">
-        <div class="host-head">
-          <h2 class="host-name">{{ host }}</h2>
-          <span class="pill critical"><span class="dot"></span>Offline</span>
-        </div>
-        <p class="offline-body">
-          Endereco: <span class="addr">{{ hostvars[host].ansible_host | default(host) }}</span><br>
-          Verifique rede, WinRM e credenciais.
-        </p>
-      </article>
-    {% endif %}
-  {% endfor %}
-  </div>
 
+      </table>
+    </td>
+  </tr>
+  {% else %}
+  <tr>
+    <td style="padding-bottom:14px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#fffaf9; border:1px dashed #e6a3a0;">
+        <tr>
+          <td style="padding:14px 18px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+              <tr>
+                <td style="font-family:Arial; font-size:16px; font-weight:bold; color:#1c2733;">{{ host }}</td>
+                <td align="right">
+                  <span style="display:inline-block; padding:3px 10px; background:#fdecec; color:#c0392b; font-family:Arial; font-size:11px; font-weight:bold;">&#9679; OFFLINE</span>
+                </td>
+              </tr>
+            </table>
+            <div style="font-family:Arial; font-size:13px; color:#667085; padding-top:8px;">
+              Endereco: <span style="font-family:'Courier New', Courier, monospace; color:#1c2733;">{{ hostvars[host].ansible_host | default(host) }}</span><br>
+              Verifique rede, WinRM e credenciais.
+            </div>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+  {% endif %}
+{% endfor %}
+
+  <!-- footer -->
+  <tr>
+    <td style="padding:8px 4px 4px; font-family:Arial; font-size:11px; color:#98a4b3;">
+      Relatorio automatico gerado pelo Ansible.
+    </td>
+  </tr>
+
+</table>
+
+</td>
+</tr>
+</table>
 </body>
 </html>
