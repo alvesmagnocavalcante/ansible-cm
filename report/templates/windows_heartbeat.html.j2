@@ -38,34 +38,34 @@
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
         <tr>
           <td width="25%" class="stack-col" style="padding:4px;">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff; border:1px solid #dde3ea; border-left:3px solid #0f9d6b;">
-              <tr><td style="padding:12px 14px;">
-                <div style="font-family:Arial; font-size:24px; font-weight:bold; color:#0f9d6b;">{{ heartbeat_online_hosts | length }}</div>
-                <div style="font-family:Arial; font-size:11px; color:#667085; padding-top:2px;">online</div>
+            <table role="presentation" width="100%" height="72" cellpadding="0" cellspacing="0" style="background:#ffffff; border:1px solid #dde3ea; border-left:3px solid #0f9d6b;">
+              <tr><td height="72" valign="middle" style="padding:12px 14px;">
+                <div style="font-family:Arial; font-size:24px; font-weight:bold; color:#0f9d6b; line-height:1;">{{ heartbeat_online_hosts | length }}</div>
+                <div style="font-family:Arial; font-size:11px; color:#667085; padding-top:4px; line-height:1.3;">online</div>
               </td></tr>
             </table>
           </td>
           <td width="25%" class="stack-col" style="padding:4px;">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff; border:1px solid #dde3ea; border-left:3px solid #c0392b;">
-              <tr><td style="padding:12px 14px;">
-                <div style="font-family:Arial; font-size:24px; font-weight:bold; color:#c0392b;">{{ heartbeat_offline_hosts | length }}</div>
-                <div style="font-family:Arial; font-size:11px; color:#667085; padding-top:2px;">offline / sem coleta</div>
+            <table role="presentation" width="100%" height="72" cellpadding="0" cellspacing="0" style="background:#ffffff; border:1px solid #dde3ea; border-left:3px solid #c0392b;">
+              <tr><td height="72" valign="middle" style="padding:12px 14px;">
+                <div style="font-family:Arial; font-size:24px; font-weight:bold; color:#c0392b; line-height:1;">{{ heartbeat_offline_hosts | length }}</div>
+                <div style="font-family:Arial; font-size:11px; color:#667085; padding-top:4px; line-height:1.3;">offline / sem coleta</div>
               </td></tr>
             </table>
           </td>
           <td width="25%" class="stack-col" style="padding:4px;">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff; border:1px solid #dde3ea; border-left:3px solid #b8860b;">
-              <tr><td style="padding:12px 14px;">
-                <div style="font-family:Arial; font-size:24px; font-weight:bold; color:#b8860b;">{{ heartbeat_alert_hosts | length }}</div>
-                <div style="font-family:Arial; font-size:11px; color:#667085; padding-top:2px;">com alertas</div>
+            <table role="presentation" width="100%" height="72" cellpadding="0" cellspacing="0" style="background:#ffffff; border:1px solid #dde3ea; border-left:3px solid #b8860b;">
+              <tr><td height="72" valign="middle" style="padding:12px 14px;">
+                <div style="font-family:Arial; font-size:24px; font-weight:bold; color:#b8860b; line-height:1;">{{ heartbeat_alert_hosts | length }}</div>
+                <div style="font-family:Arial; font-size:11px; color:#667085; padding-top:4px; line-height:1.3;">com alertas</div>
               </td></tr>
             </table>
           </td>
           <td width="25%" class="stack-col" style="padding:4px;">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ffffff; border:1px solid #dde3ea; border-left:3px solid #b8860b;">
-              <tr><td style="padding:12px 14px;">
-                <div style="font-family:Arial; font-size:24px; font-weight:bold; color:#b8860b;">{{ heartbeat_defender_alert_hosts | length }}</div>
-                <div style="font-family:Arial; font-size:11px; color:#667085; padding-top:2px;">alertas Defender/Firewall</div>
+            <table role="presentation" width="100%" height="72" cellpadding="0" cellspacing="0" style="background:#ffffff; border:1px solid #dde3ea; border-left:3px solid #b8860b;">
+              <tr><td height="72" valign="middle" style="padding:12px 14px;">
+                <div style="font-family:Arial; font-size:24px; font-weight:bold; color:#b8860b; line-height:1;">{{ heartbeat_defender_alert_hosts | length }}</div>
+                <div style="font-family:Arial; font-size:11px; color:#667085; padding-top:4px; line-height:1.3;">alertas Defender/Firewall</div>
               </td></tr>
             </table>
           </td>
@@ -182,9 +182,10 @@
             <div style="font-family:'Courier New', Courier, monospace; font-size:10.5px; letter-spacing:1px; text-transform:uppercase; color:#98a4b3; padding-bottom:6px;">Seguranca</div>
             <span style="display:inline-block; padding:3px 9px; margin:0 6px 6px 0; background:{{ '#e6f6ee' if d.defender_status | default('') == 'Ativo' else '#fdecec' }}; color:{{ '#0f9d6b' if d.defender_status | default('') == 'Ativo' else '#c0392b' }}; font-family:Arial; font-size:11px; font-weight:bold;">&#9679; Defender: {{ d.defender_status | default('Indisponivel', true) }}</span>
             <span style="display:inline-block; padding:3px 9px; margin:0 6px 6px 0; background:{{ '#e6f6ee' if d.defender_realtime_enabled | default(false, true) else '#fdecec' }}; color:{{ '#0f9d6b' if d.defender_realtime_enabled | default(false, true) else '#c0392b' }}; font-family:Arial; font-size:11px; font-weight:bold;">&#9679; Tempo real: {{ 'Ativo' if d.defender_realtime_enabled | default(false, true) else 'Desativado' }}</span>
-            <span style="display:inline-block; padding:3px 9px; margin:0 6px 6px 0; background:{{ '#e6f6ee' if d.firewall_all_enabled | default(false, true) else '#fdecec' }}; color:{{ '#0f9d6b' if d.firewall_all_enabled | default(false, true) else '#c0392b' }}; font-family:Arial; font-size:11px; font-weight:bold;">&#9679; Firewall: {{ d.firewall_status | default('Indisponivel', true) }}</span>
+            <span style="display:inline-block; padding:3px 9px; margin:0 6px 6px 0; background:{{ '#e6f6ee' if d.firewall_all_enabled | default(false, true) else '#fdecec' }}; color:{{ '#0f9d6b' if d.firewall_all_enabled | default(false, true) else '#c0392b' }}; font-family:Arial; font-size:11px; font-weight:bold;">&#9679; Firewall: {{ 'Ativo' if d.firewall_all_enabled | default(false, true) else 'Desativado' }}</span>
 
             <div style="font-family:'Courier New', Courier, monospace; font-size:11.5px; color:#667085; padding-top:6px;">
+              {{ d.firewall_status | default('Indisponivel', true) }}<br>
               Assinatura Defender: {{ d.defender_signature_age_days | default('-', true) }} dias &middot; Erro Defender: {{ d.defender_error | default('-', true) }} &middot; Erro Firewall: {{ d.firewall_error | default('-', true) }}
             </div>
 
