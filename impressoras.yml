@@ -11,21 +11,32 @@
       changed_when: false
       failed_when: false
 
-    - name: Adicionar host acessivel ao grupo de scanners
-      ansible.builtin.add_host:
-        name: "{{ inventory_hostname }}"
-        groups: scanners_impressoras
-      when:
-        - teste_winrm is defined
-        - not (teste_winrm.unreachable | default(false))
-        - teste_winrm.ping | default('') == 'pong'
-
 - name: Validar scanner remoto
   hosts: localhost
   connection: local
   gather_facts: false
 
   tasks:
+    - name: Montar lista de hosts Windows acessiveis
+      ansible.builtin.set_fact:
+        scanners_impressoras: "{{ scanners_impressoras | default([]) + [item] }}"
+      loop: "{{ groups[scan_target_group | default('windows_hosts')] | default([]) }}"
+      when:
+        - hostvars[item].teste_winrm is defined
+        - not (hostvars[item].teste_winrm.unreachable | default(false))
+        - hostvars[item].teste_winrm.ping | default('') == 'pong'
+
+    - name: Mostrar diagnostico dos hosts testados
+      ansible.builtin.debug:
+        msg: >-
+          {{ item }}:
+          ping={{ hostvars[item].teste_winrm.ping | default('') }};
+          unreachable={{ hostvars[item].teste_winrm.unreachable | default(false) }};
+          failed={{ hostvars[item].teste_winrm.failed | default(false) }};
+          msg={{ hostvars[item].teste_winrm.msg | default('') }}
+      loop: "{{ groups[scan_target_group | default('windows_hosts')] | default([]) }}"
+      when: (scanners_impressoras | default([])) | length == 0
+
     - name: Falhar se nenhum host Windows acessivel foi encontrado
       ansible.builtin.fail:
         msg: |
@@ -37,14 +48,19 @@
           - ansible_connection: winrm
           - usuario e senha
           - firewall/WinRM ativo no Windows remoto
-      when: groups['scanners_impressoras'] | default([]) | length == 0
+      when: (scanners_impressoras | default([])) | length == 0
 
     - name: Mostrar host escolhido para executar o scan
       ansible.builtin.debug:
-        msg: "Scanner escolhido: {{ groups['scanners_impressoras'][0] }}"
+        msg: "Scanner escolhido: {{ scanners_impressoras[0] }}"
+
+    - name: Adicionar scanner escolhido ao grupo temporario
+      ansible.builtin.add_host:
+        name: "{{ scanners_impressoras[0] }}"
+        groups: scanner_impressoras_escolhido
 
 - name: Identificar impressoras a partir de um host Windows remoto
-  hosts: scanners_impressoras
+  hosts: scanner_impressoras_escolhido
   gather_facts: false
 
   vars:
