@@ -1,65 +1,114 @@
 ---
-- name: Identificar impressoras na rede
-  hosts: all
-  connection: local
+- name: Identificar impressoras a partir de um host Windows remoto
+  hosts: "{{ scan_target_group | default('windows_hosts') }}"
   gather_facts: false
 
   vars:
-    rede: "10.197.3.0/24"
+    # Ajuste no Semaphore se a rede do local for outra.
+    scan_rede_prefixo: "10.197.3"
+    scan_inicio: 1
+    scan_fim: 254
 
-    fabricantes_impressora:
-      - "Hewlett Packard"
-      - "HP"
-      - "Brother"
-      - "Canon"
-      - "Epson"
-      - "Kyocera"
-      - "Xerox"
-      - "Ricoh"
-      - "Lexmark"
-      - "Samsung"
-      - "Konica"
-      - "Oki"
+    # Portas comuns em impressoras: JetDirect, LPD, IPP, HTTP e HTTPS.
+    scan_portas_impressora:
+      - 9100
+      - 515
+      - 631
+      - 80
+      - 443
 
+    scan_timeout_ms: 350
 
   tasks:
+    - name: Executar scan de impressoras no local remoto
+      ansible.windows.win_shell: |
+        $Prefixo = "{{ scan_rede_prefixo }}"
+        $Inicio = {{ scan_inicio | int }}
+        $Fim = {{ scan_fim | int }}
+        $Portas = @({{ scan_portas_impressora | join(',') }})
+        $TimeoutMs = {{ scan_timeout_ms | int }}
 
-    - name: Verificar arp-scan instalado
-      ansible.builtin.command:
-        cmd: arp-scan --version
-      register: arp_check
+        function Test-PortaTcp {
+          param(
+            [string]$Ip,
+            [int]$Porta,
+            [int]$Timeout
+          )
+
+          $Client = New-Object System.Net.Sockets.TcpClient
+          try {
+            $Async = $Client.BeginConnect($Ip, $Porta, $null, $null)
+            if (-not $Async.AsyncWaitHandle.WaitOne($Timeout, $false)) {
+              return $false
+            }
+            $Client.EndConnect($Async)
+            return $true
+          } catch {
+            return $false
+          } finally {
+            $Client.Close()
+          }
+        }
+
+        function Test-Ping {
+          param(
+            [string]$Ip,
+            [int]$Timeout
+          )
+
+          try {
+            $Ping = New-Object System.Net.NetworkInformation.Ping
+            $Reply = $Ping.Send($Ip, $Timeout)
+            return $Reply.Status -eq [System.Net.NetworkInformation.IPStatus]::Success
+          } catch {
+            return $false
+          }
+        }
+
+        $Resultados = New-Object System.Collections.Generic.List[object]
+
+        foreach ($Numero in $Inicio..$Fim) {
+          $Ip = "$Prefixo.$Numero"
+          $PingOk = Test-Ping -Ip $Ip -Timeout $TimeoutMs
+          $PortasAbertas = New-Object System.Collections.Generic.List[int]
+
+          foreach ($Porta in $Portas) {
+            if (Test-PortaTcp -Ip $Ip -Porta $Porta -Timeout $TimeoutMs) {
+              [void]$PortasAbertas.Add($Porta)
+            }
+          }
+
+          if ($PortasAbertas.Count -gt 0) {
+            $Nome = ""
+            try {
+              $Nome = ([System.Net.Dns]::GetHostEntry($Ip)).HostName
+            } catch {
+              $Nome = ""
+            }
+
+            [void]$Resultados.Add([pscustomobject]@{
+              ip = $Ip
+              nome = $Nome
+              ping = $PingOk
+              portas = @($PortasAbertas)
+            })
+          }
+        }
+
+        [pscustomobject]@{
+          scanner = $env:COMPUTERNAME
+          rede = "$Prefixo.$Inicio-$Fim"
+          quantidade = $Resultados.Count
+          impressoras = @($Resultados)
+        } | ConvertTo-Json -Depth 5
+      register: scan_impressoras
       changed_when: false
-      failed_when: false
+      run_once: true
 
-
-    - name: Falhar se arp-scan não existir
-      ansible.builtin.fail:
-        msg: |
-          arp-scan não está instalado no servidor do Semaphore.
-          Instale no host/container onde o Ansible roda.
-      when: arp_check.rc != 0
-
-
-    - name: Executar arp-scan
-      ansible.builtin.command:
-        cmd: >
-          arp-scan
-          --retry=2
-          --timeout=500
-          {{ rede }}
-      register: scan
-      changed_when: false
-
-
-    - name: Filtrar fabricantes de impressora
+    - name: Ler resultado do scan
       ansible.builtin.set_fact:
-        impressoras: >-
-          {{
-            scan.stdout_lines
-            | select('search', fabricantes_impressora | join('|'))
-            | list
-          }}
-
+        resultado_scan_impressoras: "{{ scan_impressoras.stdout | from_json }}"
+      run_once: true
 
     - name: Mostrar impressoras encontradas
       ansible.builtin.debug:
@@ -67,14 +116,15 @@
           ===============================
           IMPRESSORAS ENCONTRADAS
           ===============================
+          Scanner usado: {{ resultado_scan_impressoras.scanner }}
+          Rede analisada: {{ resultado_scan_impressoras.rede }}
+          Quantidade: {{ resultado_scan_impressoras.quantidade }}
 
-          {% for item in impressoras %}
-          {{ item }}
+          {% for item in resultado_scan_impressoras.impressoras %}
+          IP: {{ item.ip }}
+          Nome: {{ item.nome | default('') }}
+          Ping: {{ item.ping }}
+          Portas abertas: {{ item.portas | join(', ') }}
+
           {% endfor %}
-
-
-    - name: Resumo
-      ansible.builtin.debug:
-        msg:
-          - "Rede analisada: {{ rede }}"
-          - "Quantidade: {{ impressoras | length }}"
+      run_once: true
