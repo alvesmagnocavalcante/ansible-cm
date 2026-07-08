@@ -1,6 +1,6 @@
 ---
 - name: Identificar impressoras na rede
-  hosts: localhost
+  hosts: windows_hosts
   connection: local
   gather_facts: false
 
