@@ -1,6 +1,50 @@
 ---
-- name: Identificar impressoras a partir de um host Windows remoto
+- name: Escolher um host Windows remoto acessivel
   hosts: "{{ scan_target_group | default('windows_hosts') }}"
+  gather_facts: false
+  ignore_unreachable: true
+
+  tasks:
+    - name: Testar conexao WinRM
+      ansible.windows.win_ping:
+      register: teste_winrm
+      changed_when: false
+      failed_when: false
+
+    - name: Adicionar host acessivel ao grupo de scanners
+      ansible.builtin.add_host:
+        name: "{{ inventory_hostname }}"
+        groups: scanners_impressoras
+      when:
+        - teste_winrm is defined
+        - not (teste_winrm.unreachable | default(false))
+        - teste_winrm.ping | default('') == 'pong'
+
+- name: Validar scanner remoto
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Falhar se nenhum host Windows acessivel foi encontrado
+      ansible.builtin.fail:
+        msg: |
+          Nenhum host do grupo "{{ scan_target_group | default('windows_hosts') }}" respondeu ao WinRM.
+
+          Verifique no inventario:
+          - ansible_host
+          - ansible_port: 5985
+          - ansible_connection: winrm
+          - usuario e senha
+          - firewall/WinRM ativo no Windows remoto
+      when: groups['scanners_impressoras'] | default([]) | length == 0
+
+    - name: Mostrar host escolhido para executar o scan
+      ansible.builtin.debug:
+        msg: "Scanner escolhido: {{ groups['scanners_impressoras'][0] }}"
+
+- name: Identificar impressoras a partir de um host Windows remoto
+  hosts: scanners_impressoras
   gather_facts: false
 
   vars:
@@ -9,17 +53,19 @@
     scan_inicio: 1
     scan_fim: 254
 
-    # Portas comuns em impressoras: JetDirect, LPD, IPP, HTTP e HTTPS.
+    # Portas de impressao. HTTP/HTTPS ficam fora por padrao para reduzir
+    # conexoes desnecessarias e falso positivo em outros equipamentos.
     scan_portas_impressora:
       - 9100
       - 515
       - 631
-      - 80
-      - 443
 
-    scan_timeout_ms: 350
+    scan_timeout_ms: 200
+    scan_pausa_ms: 50
+    scan_exigir_ping: true
 
   tasks:
+
     - name: Executar scan de impressoras no local remoto
       ansible.windows.win_shell: |
         $Prefixo = "{{ scan_rede_prefixo }}"
@@ -27,6 +73,8 @@
         $Fim = {{ scan_fim | int }}
         $Portas = @({{ scan_portas_impressora | join(',') }})
         $TimeoutMs = {{ scan_timeout_ms | int }}
+        $PausaMs = {{ scan_pausa_ms | int }}
+        $ExigirPing = [System.Convert]::ToBoolean("{{ scan_exigir_ping | bool }}")
 
         function Test-PortaTcp {
           param(
@@ -72,9 +120,11 @@
           $PingOk = Test-Ping -Ip $Ip -Timeout $TimeoutMs
           $PortasAbertas = New-Object System.Collections.Generic.List[int]
 
-          foreach ($Porta in $Portas) {
-            if (Test-PortaTcp -Ip $Ip -Porta $Porta -Timeout $TimeoutMs) {
-              [void]$PortasAbertas.Add($Porta)
+          if ($PingOk -or -not $ExigirPing) {
+            foreach ($Porta in $Portas) {
+              if (Test-PortaTcp -Ip $Ip -Porta $Porta -Timeout $TimeoutMs) {
+                [void]$PortasAbertas.Add($Porta)
+              }
             }
           }
 
@@ -92,6 +142,10 @@
               ping = $PingOk
               portas = @($PortasAbertas)
             })
+          }
+
+          if ($PausaMs -gt 0) {
+            Start-Sleep -Milliseconds $PausaMs
           }
         }
 
