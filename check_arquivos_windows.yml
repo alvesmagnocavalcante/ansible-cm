@@ -1,6 +1,6 @@
 ---
 - name: Verificar arquivos em uma pasta no Windows
-  hosts: windows
+  hosts: windows_hosts
   gather_facts: false
 
   vars:
