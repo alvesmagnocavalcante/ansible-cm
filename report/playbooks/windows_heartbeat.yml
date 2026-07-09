@@ -432,6 +432,17 @@
           alertas={{ heartbeat_alert_hosts | length }},
           alertas_defender_firewall={{ heartbeat_defender_alert_hosts | length }}.
 
+    - name: Definir nome do hotel no relatorio
+      ansible.builtin.set_fact:
+        heartbeat_report_hotel_name: "{{ heartbeat_report_hotel | default(hotel_name | default('', true), true) }}"
+
+    - name: Definir titulo do relatorio
+      ansible.builtin.set_fact:
+        heartbeat_report_title: >-
+          {{ 'Status dos Servidores e VMs Windows - ' ~ heartbeat_report_hotel_name
+             if (heartbeat_report_hotel_name | string | length) > 0
+             else 'Status dos Servidores e VMs Windows' }}
+
     - name: Localizar template do relatorio HTML
       ansible.builtin.set_fact:
         heartbeat_template_path: >-
@@ -496,7 +507,7 @@
         from: "{{ email_from }}"
         to: "{{ email_to.split(',') | map('trim') | list }}"
         subject: >-
-          {{ email_subject }} -
+          {{ email_subject }}{{ ' - ' ~ heartbeat_report_hotel_name if heartbeat_report_hotel_name | length > 0 else '' }} -
           {{ ansible_facts['date_time']['date'] }}
         subtype: html
         body: "{{ heartbeat_report_html }}"
