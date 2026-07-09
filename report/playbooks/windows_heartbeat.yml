@@ -434,7 +434,12 @@
 
     - name: Definir nome do hotel no relatorio
       ansible.builtin.set_fact:
-        heartbeat_report_hotel_name: "{{ heartbeat_report_hotel | default(hotel_name | default('', true), true) }}"
+        heartbeat_report_hotel_name: >-
+          {{ heartbeat_report_hotel |
+             default(hotel_name |
+             default(heartbeat_report_name |
+             default(heartbeat_target_group | default('', true), true), true), true) |
+             string | trim }}
 
     - name: Definir titulo do relatorio
       ansible.builtin.set_fact:
@@ -507,7 +512,7 @@
         from: "{{ email_from }}"
         to: "{{ email_to.split(',') | map('trim') | list }}"
         subject: >-
-          {{ email_subject }}{{ ' - ' ~ heartbeat_report_hotel_name if heartbeat_report_hotel_name | length > 0 else '' }} -
+          {{ '[' ~ heartbeat_report_hotel_name ~ '] ' if heartbeat_report_hotel_name | length > 0 else '' }}{{ email_subject }} -
           {{ ansible_facts['date_time']['date'] }}
         subtype: html
         body: "{{ heartbeat_report_html }}"
