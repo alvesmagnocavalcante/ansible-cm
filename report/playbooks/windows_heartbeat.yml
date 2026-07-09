@@ -365,6 +365,26 @@
         fail_msg: Configure HEARTBEAT_SMTP_HOST, HEARTBEAT_EMAIL_FROM e HEARTBEAT_EMAIL_TO.
       when: send_email | bool
 
+    - name: Validar resolucao DNS do servidor SMTP
+      ansible.builtin.command:
+        argv:
+          - getent
+          - hosts
+          - "{{ smtp_host }}"
+      register: heartbeat_smtp_dns
+      changed_when: false
+      failed_when: false
+      when: send_email | bool
+
+    - name: Confirmar que o servidor SMTP resolve no controlador
+      ansible.builtin.assert:
+        that:
+          - heartbeat_smtp_dns.rc == 0
+        fail_msg: >-
+          Nao foi possivel resolver o SMTP '{{ smtp_host }}' no controlador do Semaphore.
+          Verifique DNS/rede do servidor onde o Semaphore executa ou informe um IP em HEARTBEAT_SMTP_HOST.
+      when: send_email | bool
+
     - name: Enviar heartbeat por e-mail
       community.general.mail:
         host: "{{ smtp_host }}"
