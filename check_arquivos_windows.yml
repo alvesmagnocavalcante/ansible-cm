@@ -3,18 +3,15 @@
   hosts: windows_hosts
   gather_facts: false
   serial: 1
-
   vars:
     pasta_origem: 'C:\Micros\Simphony\WebServer\fiscal\nfce\request'
     limite_nomes: 50
-
   tasks:
     - name: Checar arquivos na pasta sem varredura pesada
       ansible.windows.win_shell: |
         $ErrorActionPreference = 'SilentlyContinue'
         $pasta = '{{ pasta_origem }}'
         $limite = {{ limite_nomes }}
-
         if (-not (Test-Path -LiteralPath $pasta -PathType Container)) {
           [pscustomobject]@{
             existe = $false
@@ -26,11 +23,9 @@
           } | ConvertTo-Json -Compress
           exit 0
         }
-
         $arquivos = New-Object System.Collections.Generic.List[string]
         $temMais = $false
         $enumerador = $null
-
         try {
           $enumerador = [System.IO.Directory]::EnumerateFiles($pasta).GetEnumerator()
           while ($enumerador.MoveNext()) {
@@ -47,13 +42,15 @@
           }
         }
 
+        $mensagem = if ($arquivos.Count -gt 0) { "Arquivos encontrados." } else { "Nenhum arquivo encontrado." }
+
         [pscustomobject]@{
           existe = $true
           ha_arquivos = ($arquivos.Count -gt 0)
           quantidade_listada = $arquivos.Count
           tem_mais = $temMais
           arquivos = @($arquivos)
-          mensagem = if ($arquivos.Count -gt 0) { "Arquivos encontrados." } else { "Nenhum arquivo encontrado." }
+          mensagem = $mensagem
         } | ConvertTo-Json -Compress
       register: check_arquivos
       changed_when: false
@@ -61,17 +58,16 @@
 
     - name: Converter resultado do check
       ansible.builtin.set_fact:
-        resultado_arquivos: "{{ check_arquivos.stdout | default('{}') | from_json }}"
-      when: check_arquivos.stdout is defined and check_arquivos.stdout | length > 0
+        resultado_arquivos: "{{ (check_arquivos.stdout | default('') | trim | length > 0) | ternary(check_arquivos.stdout | from_json, {}) }}"
 
     - name: Mostrar resultado
       ansible.builtin.debug:
         msg:
           host: "{{ inventory_hostname }}"
           pasta: "{{ pasta_origem }}"
-          existe: "{{ resultado_arquivos.existe | default(false) }}"
-          ha_arquivos: "{{ resultado_arquivos.ha_arquivos | default(false) }}"
-          quantidade_listada: "{{ resultado_arquivos.quantidade_listada | default(0) }}"
-          tem_mais_arquivos: "{{ resultado_arquivos.tem_mais | default(false) }}"
-          arquivos: "{{ resultado_arquivos.arquivos | default([]) }}"
-          observacao: "{{ resultado_arquivos.mensagem | default('Nao foi possivel ler a pasta.') }}"
+          existe: "{{ resultado_arquivos.existe | default(false, true) }}"
+          ha_arquivos: "{{ resultado_arquivos.ha_arquivos | default(false, true) }}"
+          quantidade_listada: "{{ resultado_arquivos.quantidade_listada | default(0, true) }}"
+          tem_mais_arquivos: "{{ resultado_arquivos.tem_mais | default(false, true) }}"
+          arquivos: "{{ resultado_arquivos.arquivos | default([], true) }}"
+          observacao: "{{ resultado_arquivos.mensagem | default('Nao foi possivel ler a pasta.', true) }}"
