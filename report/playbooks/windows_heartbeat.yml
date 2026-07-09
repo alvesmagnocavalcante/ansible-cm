@@ -438,7 +438,11 @@
           {{ heartbeat_report_hotel |
              default(hotel_name |
              default(heartbeat_report_name |
-             default(heartbeat_target_group | default('', true), true), true), true) |
+             default(lookup('ansible.builtin.env', 'HEARTBEAT_REPORT_HOTEL') |
+             default(lookup('ansible.builtin.env', 'heartbeat_report_hotel') |
+             default(lookup('ansible.builtin.env', 'HOTEL_NAME') |
+             default(lookup('ansible.builtin.env', 'hotel_name') |
+             default(heartbeat_target_group | default('', true), true), true), true), true), true), true), true) |
              string | trim }}
 
     - name: Definir titulo do relatorio
