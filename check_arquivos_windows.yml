@@ -2,44 +2,76 @@
 - name: Verificar arquivos em uma pasta no Windows
   hosts: windows_hosts
   gather_facts: false
+  serial: 1
 
   vars:
-    pasta_origem: "C:\Micros\Simphony\WebServer\fiscal\nfce\request"
-    buscar_subpastas: false
+    pasta_origem: 'C:\Micros\Simphony\WebServer\fiscal\nfce\request'
+    limite_nomes: 50
 
   tasks:
-    - name: Verificar se a pasta existe
-      ansible.windows.win_stat:
-        path: "{{ pasta_origem }}"
-      register: pasta_verificada
+    - name: Checar arquivos na pasta sem varredura pesada
+      ansible.windows.win_shell: |
+        $ErrorActionPreference = 'SilentlyContinue'
+        $pasta = '{{ pasta_origem }}'
+        $limite = {{ limite_nomes }}
 
-    - name: Parar se a pasta nao existir
-      ansible.builtin.fail:
-        msg: "A pasta {{ pasta_origem }} nao existe no host {{ inventory_hostname }}."
-      when: not pasta_verificada.stat.exists
+        if (-not (Test-Path -LiteralPath $pasta -PathType Container)) {
+          [pscustomobject]@{
+            existe = $false
+            ha_arquivos = $false
+            quantidade_listada = 0
+            tem_mais = $false
+            arquivos = @()
+            mensagem = "A pasta nao existe."
+          } | ConvertTo-Json -Compress
+          exit 0
+        }
 
-    - name: Parar se o caminho nao for uma pasta
-      ansible.builtin.fail:
-        msg: "O caminho {{ pasta_origem }} existe, mas nao e uma pasta."
-      when: not pasta_verificada.stat.isdir
+        $arquivos = New-Object System.Collections.Generic.List[string]
+        $temMais = $false
+        $enumerador = $null
 
-    - name: Procurar arquivos na pasta
-      ansible.windows.win_find:
-        paths: "{{ pasta_origem }}"
-        file_type: file
-        recurse: "{{ buscar_subpastas }}"
-      register: arquivos_encontrados
+        try {
+          $enumerador = [System.IO.Directory]::EnumerateFiles($pasta).GetEnumerator()
+          while ($enumerador.MoveNext()) {
+            if ($arquivos.Count -lt $limite) {
+              $arquivos.Add([System.IO.Path]::GetFileName($enumerador.Current))
+            } else {
+              $temMais = $true
+              break
+            }
+          }
+        } finally {
+          if ($null -ne $enumerador) {
+            $enumerador.Dispose()
+          }
+        }
 
-    - name: Informar quando nao houver arquivos
-      ansible.builtin.debug:
-        msg: "Nenhum arquivo encontrado em {{ pasta_origem }} no host {{ inventory_hostname }}."
-      when: arquivos_encontrados.matched | int == 0
+        [pscustomobject]@{
+          existe = $true
+          ha_arquivos = ($arquivos.Count -gt 0)
+          quantidade_listada = $arquivos.Count
+          tem_mais = $temMais
+          arquivos = @($arquivos)
+          mensagem = if ($arquivos.Count -gt 0) { "Arquivos encontrados." } else { "Nenhum arquivo encontrado." }
+        } | ConvertTo-Json -Compress
+      register: check_arquivos
+      changed_when: false
+      failed_when: false
 
-    - name: Mostrar quantidade e nomes dos arquivos encontrados
+    - name: Converter resultado do check
+      ansible.builtin.set_fact:
+        resultado_arquivos: "{{ check_arquivos.stdout | default('{}') | from_json }}"
+      when: check_arquivos.stdout is defined and check_arquivos.stdout | length > 0
+
+    - name: Mostrar resultado
       ansible.builtin.debug:
         msg:
           host: "{{ inventory_hostname }}"
           pasta: "{{ pasta_origem }}"
-          quantidade: "{{ arquivos_encontrados.matched }}"
-          arquivos: "{{ arquivos_encontrados.files | map(attribute='filename') | list }}"
-      when: arquivos_encontrados.matched | int > 0
+          existe: "{{ resultado_arquivos.existe | default(false) }}"
+          ha_arquivos: "{{ resultado_arquivos.ha_arquivos | default(false) }}"
+          quantidade_listada: "{{ resultado_arquivos.quantidade_listada | default(0) }}"
+          tem_mais_arquivos: "{{ resultado_arquivos.tem_mais | default(false) }}"
+          arquivos: "{{ resultado_arquivos.arquivos | default([]) }}"
+          observacao: "{{ resultado_arquivos.mensagem | default('Nao foi possivel ler a pasta.') }}"
