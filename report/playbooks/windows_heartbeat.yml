@@ -54,6 +54,45 @@
           $_.StartMode -eq 'Auto' -and $_.State -ne 'Running'
         }).Count
 
+        $dhcpAdapters = @()
+        $dhcpEnabled = $null
+        $dhcpStatus = "Indisponivel"
+        $dhcpError = $null
+
+        try {
+          $dhcpAdapters = @(
+            Get-CimInstance Win32_NetworkAdapterConfiguration -Filter 'IPEnabled=True' -ErrorAction Stop | ForEach-Object {
+              [pscustomobject]@{
+                description = $_.Description
+                dhcp_enabled = [bool]$_.DHCPEnabled
+                dhcp_server = $_.DHCPServer
+                ip_addresses = @($_.IPAddress)
+              }
+            }
+          )
+
+          if ($dhcpAdapters.Count -gt 0) {
+            $dhcpEnabledAdapters = @($dhcpAdapters | Where-Object { $_.dhcp_enabled })
+            $dhcpDisabledAdapters = @($dhcpAdapters | Where-Object { -not $_.dhcp_enabled })
+
+            if ($dhcpEnabledAdapters.Count -eq $dhcpAdapters.Count) {
+              $dhcpEnabled = $true
+              $dhcpStatus = "Ativo"
+            } elseif ($dhcpDisabledAdapters.Count -eq $dhcpAdapters.Count) {
+              $dhcpEnabled = $false
+              $dhcpStatus = "Desativado"
+            } else {
+              $dhcpEnabled = $null
+              $dhcpStatus = "Misto"
+            }
+          } else {
+            $dhcpStatus = "Sem adaptador IP ativo"
+          }
+        } catch {
+          $dhcpError = $_.Exception.Message
+          $dhcpStatus = "Erro ao consultar"
+        }
+
         [pscustomobject]@{
           hostname = $env:COMPUTERNAME
           os = $os.Caption
@@ -66,6 +105,10 @@
           uptime_days = [math]::Round($uptime.TotalDays, 1)
           last_boot = $os.LastBootUpTime.ToString('yyyy-MM-dd HH:mm:ss')
           stopped_automatic_services = $stoppedAutomatic
+          dhcp_enabled = $dhcpEnabled
+          dhcp_status = $dhcpStatus
+          dhcp_adapters = $dhcpAdapters
+          dhcp_error = $dhcpError
           disks = $disks
           collected_at = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
         } | ConvertTo-Json -Depth 5 -Compress
@@ -271,7 +314,8 @@
         msg: >-
           {{ item }}:
           Defender={{ current_data.defender_status | default('Indisponivel', true) }};
-          Firewall={{ current_data.firewall_status | default('Indisponivel', true) }}
+          Firewall={{ current_data.firewall_status | default('Indisponivel', true) }};
+          DHCP={{ current_data.dhcp_status | default('Indisponivel', true) }}
       loop: "{{ heartbeat_online_hosts }}"
       loop_control:
         label: "{{ item }}"
@@ -291,7 +335,7 @@
       ansible.builtin.set_fact:
         heartbeat_report_html: >-
           {{ lookup('ansible.builtin.template',
-                    playbook_dir + '/../templates/windows_heartbeat.html.j2') }}
+                    playbook_dir + '/windows_heartbeat.html.j2') }}
 
     - name: Validar configuracao de e-mail
       ansible.builtin.assert:
