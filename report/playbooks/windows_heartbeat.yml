@@ -331,11 +331,30 @@
           alertas={{ heartbeat_alert_hosts | length }},
           alertas_defender_firewall={{ heartbeat_defender_alert_hosts | length }}.
 
+    - name: Localizar template do relatorio HTML
+      ansible.builtin.set_fact:
+        heartbeat_template_path: >-
+          {{ lookup('ansible.builtin.first_found',
+                    {
+                      'files': [
+                        playbook_dir + '/../templates/windows_heartbeat.html.j2',
+                        playbook_dir + '/windows_heartbeat.html.j2'
+                      ],
+                      'skip': true
+                    }) }}
+
+    - name: Validar template do relatorio HTML
+      ansible.builtin.assert:
+        that:
+          - heartbeat_template_path | length > 0
+        fail_msg: >-
+          Template windows_heartbeat.html.j2 nao encontrado. No Semaphore, coloque o arquivo
+          em report/templates/windows_heartbeat.html.j2 ou ao lado do playbook.
+
     - name: Gerar relatorio HTML somente em memoria
       ansible.builtin.set_fact:
         heartbeat_report_html: >-
-          {{ lookup('ansible.builtin.template',
-                    playbook_dir + '/windows_heartbeat.html.j2') }}
+          {{ lookup('ansible.builtin.template', heartbeat_template_path) }}
 
     - name: Validar configuracao de e-mail
       ansible.builtin.assert:
