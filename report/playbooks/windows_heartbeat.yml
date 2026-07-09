@@ -27,6 +27,92 @@
           {{ '__HEARTBEAT_OK__' in (heartbeat_ping.stdout | default('')) }}
       delegate_to: localhost
 
+    - name: Resolver endereco configurado do host offline
+      ansible.builtin.command:
+        argv:
+          - getent
+          - hosts
+          - "{{ ansible_host | default(inventory_hostname) }}"
+      register: heartbeat_offline_dns_target
+      changed_when: false
+      failed_when: false
+      delegate_to: localhost
+      when: not heartbeat_reachable
+
+    - name: Resolver nome do inventario do host offline
+      ansible.builtin.command:
+        argv:
+          - getent
+          - hosts
+          - "{{ inventory_hostname }}"
+      register: heartbeat_offline_dns_name
+      changed_when: false
+      failed_when: false
+      delegate_to: localhost
+      when: not heartbeat_reachable
+
+    - name: Testar ping ICMP do host offline pelo controlador
+      ansible.builtin.command:
+        argv:
+          - ping
+          - -c
+          - "1"
+          - -W
+          - "2"
+          - "{{ ansible_host | default(inventory_hostname) }}"
+      register: heartbeat_offline_ping
+      changed_when: false
+      failed_when: false
+      delegate_to: localhost
+      when: not heartbeat_reachable
+
+    - name: Testar porta WinRM do host offline pelo controlador
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host | default(inventory_hostname) }}"
+        port: "{{ ansible_port | default(5986) }}"
+        state: started
+        timeout: 3
+      register: heartbeat_offline_winrm_port
+      changed_when: false
+      failed_when: false
+      delegate_to: localhost
+      when: not heartbeat_reachable
+
+    - name: Registrar diagnostico de host offline
+      ansible.builtin.set_fact:
+        heartbeat_offline_diagnostic:
+          target: "{{ ansible_host | default(inventory_hostname) }}"
+          inventory_name: "{{ inventory_hostname }}"
+          dns_target_resolves: "{{ heartbeat_offline_dns_target.rc == 0 }}"
+          dns_target_ips: "{{ heartbeat_offline_dns_target.stdout | default('') | regex_findall('\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b') }}"
+          dns_inventory_resolves: "{{ heartbeat_offline_dns_name.rc == 0 }}"
+          dns_inventory_ips: "{{ heartbeat_offline_dns_name.stdout | default('') | regex_findall('\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b') }}"
+          ping_ok: "{{ heartbeat_offline_ping.rc == 0 }}"
+          winrm_port: "{{ ansible_port | default(5986) }}"
+          winrm_port_open: "{{ heartbeat_offline_winrm_port.state | default('') == 'started' }}"
+          reason: >-
+            {% set target = ansible_host | default(inventory_hostname) %}
+            {% set target_ips = heartbeat_offline_dns_target.stdout | default('') | regex_findall('\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b') %}
+            {% set name_ips = heartbeat_offline_dns_name.stdout | default('') | regex_findall('\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b') %}
+            {% set target_is_ip = target is match('^(?:\\d{1,3}\\.){3}\\d{1,3}$') %}
+            {% set ping_ok = heartbeat_offline_ping.rc == 0 %}
+            {% set winrm_open = heartbeat_offline_winrm_port.state | default('') == 'started' %}
+            {% if heartbeat_offline_dns_target.rc != 0 %}
+            DNS nao resolve o endereco configurado.
+            {% elif target_is_ip and name_ips | length > 0 and target not in name_ips %}
+            Possivel IP alterado: o nome resolve para {{ name_ips | join(', ') }}, mas o inventario usa {{ target }}.
+            {% elif winrm_open %}
+            Porta WinRM aberta, mas a validacao WinRM falhou. Verifique credenciais, TLS ou autorizacao.
+            {% elif ping_ok %}
+            Host responde ping, mas a porta WinRM {{ ansible_port | default(5986) }} nao respondeu. Verifique servico WinRM ou firewall.
+            {% elif target_ips | length > 0 %}
+            Sem ping e sem WinRM. Possivel maquina desligada, bloqueio de rede/firewall ou IP alterado.
+            {% else %}
+            Sem DNS, ping e WinRM. Verifique nome/IP no inventario.
+            {% endif %}
+      delegate_to: localhost
+      when: not heartbeat_reachable
+
     - name: Consultar metricas somente leitura via PowerShell e CIM
       ansible.builtin.raw: |
         $ErrorActionPreference = 'Stop'
@@ -321,6 +407,21 @@
         label: "{{ item }}"
       vars:
         current_data: "{{ hostvars[item].heartbeat_data | default({}) }}"
+
+    - name: Exibir diagnostico dos hosts offline
+      ansible.builtin.debug:
+        msg: >-
+          {{ item }}:
+          {{ offline_diag.reason | default('Diagnostico indisponivel', true) }}
+          Target={{ offline_diag.target | default(hostvars[item].ansible_host | default(item), true) }};
+          DNS={{ 'OK' if offline_diag.dns_target_resolves | default(false) | bool else 'Falhou' }};
+          Ping={{ 'OK' if offline_diag.ping_ok | default(false) | bool else 'Falhou' }};
+          WinRM={{ 'OK' if offline_diag.winrm_port_open | default(false) | bool else 'Falhou' }}
+      loop: "{{ heartbeat_offline_hosts }}"
+      loop_control:
+        label: "{{ item }}"
+      vars:
+        offline_diag: "{{ hostvars[item].heartbeat_offline_diagnostic | default({}) }}"
 
     - name: Exibir resumo antes do envio
       ansible.builtin.debug:
