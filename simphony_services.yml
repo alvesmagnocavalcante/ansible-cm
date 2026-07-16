@@ -26,7 +26,7 @@
           {{ (svc_info.services[0].path
               | regex_replace('^"', '')
               | regex_replace('".*$', '')
-              | regex_replace('\\\\[^\\\\]+\\.exe.*$', ''))
+              | regex_replace('(?i)\\[^\\]+\.exe.*$', ''))
           }}
       when: svc_info.services is defined and svc_info.services | length > 0
 
