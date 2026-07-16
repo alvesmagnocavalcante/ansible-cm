@@ -45,15 +45,15 @@
 
     - name: Listar logs encontrados (caminho + data de modificacao)
       ansible.builtin.debug:
-        msg: "{{ item.path }} | alterado em: {{ item.mtime }}"
-      loop: "{{ found_logs.files | sort(attribute='mtime') | reverse }}"
+        msg: "{{ item.path }} | alterado em: {{ item.lastwritetime }}"
+      loop: "{{ found_logs.files | sort(attribute='lastwritetime', reverse=true) }}"
       loop_control:
         label: "{{ item.path }}"
       when: found_logs.files is defined
 
     - name: Selecionar os 3 logs mais recentes
       ansible.builtin.set_fact:
-        recent_logs: "{{ (found_logs.files | sort(attribute='mtime') | reverse)[:3] | map(attribute='path') | list }}"
+        recent_logs: "{{ (found_logs.files | sort(attribute='lastwritetime', reverse=true))[:3] | map(attribute='path') | list }}"
       when: found_logs.files is defined and found_logs.files | length > 0
 
     - name: Ler as ultimas linhas dos logs mais recentes (SOMENTE LEITURA - Get-Content nao modifica o arquivo)
