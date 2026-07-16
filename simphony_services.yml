@@ -1,0 +1,57 @@
+---
+# Playbook 100% somente-leitura (read-only)
+# Não altera, inicia, para ou reconfigura nenhum serviço.
+# Apenas consulta se os serviços existem e em que estado estão.
+
+- name: Verificar existencia dos servicos Simphony (read-only)
+  hosts: windows_hosts   # ajuste para o grupo/host do seu inventory
+  gather_facts: no
+
+  vars:
+    # Ajuste os nomes conforme aparecem no seu ambiente
+    # (nome do SERVICO no Windows, nao o nome do executavel)
+    simphony_services:
+      - "EgatewayService"
+      - "CapsService"
+      - "MicrosCAL"
+      - "MicrosKDS"
+
+  tasks:
+    - name: Consultar todos os servicos do host (somente leitura)
+      ansible.windows.win_service_info:
+      register: all_services
+
+    - name: Filtrar servicos relacionados a Simphony/Micros
+      ansible.builtin.set_fact:
+        found_services: >-
+          {{ all_services.services
+             | selectattr('name', 'search', 'Simphony|Micros|Caps|Egateway', ignorecase=true)
+             | list }}
+
+    - name: Mostrar servicos encontrados (nome, estado, start_mode)
+      ansible.builtin.debug:
+        msg: >-
+          {{ found_services
+             | map(attribute='name')
+             | zip(found_services | map(attribute='state'),
+                   found_services | map(attribute='start_mode'))
+             | list }}
+
+    - name: Checar especificamente cada servico da lista simphony_services
+      ansible.windows.win_service_info:
+        name: "{{ item }}"
+      register: specific_check
+      loop: "{{ simphony_services }}"
+      ignore_errors: yes   # so para nao quebrar o playbook se um nome nao existir
+
+    - name: Resumo por servico (existe? estado?)
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.item }}:
+          {{ 'ENCONTRADO - state=' ~ item.services[0].state ~
+             ', start_mode=' ~ item.services[0].start_mode
+             if (item.services is defined and item.services | length > 0)
+             else 'NAO ENCONTRADO' }}
+      loop: "{{ specific_check.results }}"
+      loop_control:
+        label: "{{ item.item }}"
