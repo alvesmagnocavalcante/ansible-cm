@@ -4,7 +4,7 @@
 # Apenas consulta se os serviços existem e em que estado estão.
 
 - name: Verificar existencia dos servicos Simphony (read-only)
-  hosts: simphony_hosts   # ajuste para o grupo/host do seu inventory
+  hosts: windows_hosts   # ajuste para o grupo/host do seu inventory
   gather_facts: no
 
   vars:
