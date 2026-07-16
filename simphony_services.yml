@@ -1,54 +1,75 @@
 ---
 # Playbook 100% somente-leitura (read-only)
-# Não altera, inicia, para ou reconfigura nenhum serviço.
-# Apenas consulta se os serviços existem e em que estado estão.
+# NAO cria, apaga, move ou edita nenhum arquivo.
+# NAO reinicia/para/altera nenhum servico.
+# Get-Content apenas LE o conteudo (streaming), nao trava nem modifica o arquivo.
 
-- name: Verificar existencia dos servicos Simphony (read-only)
+- name: Consultar logs do Simphony (read-only)
   hosts: windows_hosts   # ajuste para o grupo/host do seu inventory
   gather_facts: no
 
   vars:
-    # Nomes reais confirmados no ambiente (CHARME-WRDPN04)
-    simphony_services:
-      - "MICROS CAL Client"
-      - "Oracle Hospitality Simphony Service Host"
+    target_service: "Oracle Hospitality Simphony Service Host"
+    log_tail_lines: 50
 
   tasks:
-    - name: Consultar todos os servicos do host (somente leitura)
-      ansible.windows.win_service_info:
-      register: all_services
 
-    - name: Filtrar servicos relacionados a Simphony/Micros
+    - name: Obter info do servico (para descobrir caminho de instalacao)
+      ansible.windows.win_service_info:
+        name: "{{ target_service }}"
+      register: svc_info
+
+    - name: Extrair diretorio de instalacao a partir do path do executavel
       ansible.builtin.set_fact:
-        found_services: >-
-          {{ all_services.services
-             | selectattr('name', 'search', '^(Oracle Hospitality|MICROS |Simphony|CAPS |Egateway)', ignorecase=true)
-             | list }}
+        # remove aspas, argumentos de linha de comando e o nome do .exe, deixando so a pasta
+        install_dir: >-
+          {{ (svc_info.services[0].path
+              | regex_replace('^"', '')
+              | regex_replace('".*$', '')
+              | regex_replace('\\\\[^\\\\]+\\.exe.*$', ''))
+          }}
+      when: svc_info.services is defined and svc_info.services | length > 0
 
-    - name: Mostrar servicos encontrados (nome, estado, start_mode)
+    - name: Mostrar diretorio detectado
       ansible.builtin.debug:
-        msg: >-
-          {{ found_services
-             | map(attribute='name')
-             | zip(found_services | map(attribute='state'),
-                   found_services | map(attribute='start_mode'))
-             | list }}
+        var: install_dir
 
-    - name: Checar especificamente cada servico da lista simphony_services
-      ansible.windows.win_service_info:
-        name: "{{ item }}"
-      register: specific_check
-      loop: "{{ simphony_services }}"
-      ignore_errors: yes   # so para nao quebrar o playbook se um nome nao existir
+    - name: Procurar arquivos .log recursivamente (apenas listar, nao abre)
+      ansible.windows.win_find:
+        paths: "{{ install_dir }}"
+        patterns: "*.log"
+        recurse: yes
+        age: "-2d"          # so arquivos modificados nos ultimos 2 dias (ajuste se quiser)
+      register: found_logs
+      when: install_dir is defined
 
-    - name: Resumo por servico (existe? estado?)
+    - name: Listar logs encontrados (caminho + data de modificacao)
       ansible.builtin.debug:
-        msg: >-
-          {{ item.item }}:
-          {{ 'ENCONTRADO - state=' ~ item.services[0].state ~
-             ', start_mode=' ~ item.services[0].start_mode
-             if (item.services is defined and item.services | length > 0)
-             else 'NAO ENCONTRADO' }}
-      loop: "{{ specific_check.results }}"
+        msg: "{{ item.path }} | alterado em: {{ item.mtime }}"
+      loop: "{{ found_logs.files | sort(attribute='mtime') | reverse }}"
+      loop_control:
+        label: "{{ item.path }}"
+      when: found_logs.files is defined
+
+    - name: Selecionar os 3 logs mais recentes
+      ansible.builtin.set_fact:
+        recent_logs: "{{ (found_logs.files | sort(attribute='mtime') | reverse)[:3] | map(attribute='path') | list }}"
+      when: found_logs.files is defined and found_logs.files | length > 0
+
+    - name: Ler as ultimas linhas dos logs mais recentes (SOMENTE LEITURA - Get-Content nao modifica o arquivo)
+      ansible.windows.win_shell: >-
+        Get-Content -Path "{{ item }}" -Tail {{ log_tail_lines }} -ErrorAction Stop
+      register: log_tail
+      loop: "{{ recent_logs | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      changed_when: false     # forca o Ansible a nunca marcar como "changed", pois e apenas leitura
+      failed_when: false      # nao derruba o playbook se um arquivo estiver bloqueado/inacessivel
+
+    - name: Exibir conteudo lido de cada log
+      ansible.builtin.debug:
+        msg: "{{ item.stdout_lines }}"
+      loop: "{{ log_tail.results }}"
       loop_control:
         label: "{{ item.item }}"
+      when: log_tail.results is defined
