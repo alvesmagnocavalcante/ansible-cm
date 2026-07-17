@@ -27,7 +27,7 @@
   <tr>
     <td style="padding:4px 4px 18px;">
       <div style="font-family:'Courier New', Courier, monospace; font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#0f766e; font-weight:bold;">Monitoramento de infraestrutura</div>
-      <div style="font-family:Arial, Helvetica, sans-serif; font-size:22px; font-weight:bold; color:#1c2733; padding-top:2px;">{{ heartbeat_report_title | default('Status dos Servidores e VMs Windows', true) }}</div>
+      <div style="font-family:Arial, Helvetica, sans-serif; font-size:22px; font-weight:bold; color:#1c2733; padding-top:2px;">{{ heartbeat_report_title }}</div>
       <div style="font-family:'Courier New', Courier, monospace; font-size:12px; color:#667085; padding-top:6px;">Gerado em {{ ansible_facts['date_time']['date'] }} {{ ansible_facts['date_time']['time'] }} (controlador)</div>
     </td>
   </tr>
