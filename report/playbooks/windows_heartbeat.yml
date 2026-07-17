@@ -223,7 +223,7 @@
     - name: Consultar compartilhamento da pasta fiscal
       ansible.builtin.raw: |
         $ProgressPreference = 'SilentlyContinue'
-        $folderPath = '{{ heartbeat_shared_folder_path | replace("'", "''") }}'
+        $folderPath = 'C:\Micros\Simphony\WebServer\fiscal\nfce\request'
         $exists = $false
         $accessible = $false
         $direct = $false
