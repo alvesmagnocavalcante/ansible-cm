@@ -435,10 +435,20 @@
     - name: Definir nome do hotel no relatorio
       ansible.builtin.set_fact:
         heartbeat_report_hotel_name: >-
-          {{ heartbeat_report_hotel |
-             default(hotel_name |
-             default(heartbeat_target_group | default('windows_hosts', true), true), true) |
+          {{ hostvars[heartbeat_hosts | first].heartbeat_report_hotel |
+             default(hostvars[heartbeat_hosts | first].hotel_name, true) |
+             default(heartbeat_report_hotel, true) |
+             default(hotel_name, true) |
+             default('', true) |
              string | trim }}
+
+    - name: Validar nome do hotel encontrado
+      ansible.builtin.assert:
+        that:
+          - heartbeat_report_hotel_name | length > 0
+        fail_msg: >-
+          Nome do hotel nao encontrado. Defina hotel_name ou heartbeat_report_hotel
+          nas variaveis do grupo/host do inventario no Semaphore.
 
     - name: Definir titulo do relatorio
       ansible.builtin.set_fact:
