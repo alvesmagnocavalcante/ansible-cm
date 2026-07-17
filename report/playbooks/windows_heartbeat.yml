@@ -128,74 +128,6 @@
         $memoryUsed = [math]::Round((1 - ($os.FreePhysicalMemory / $os.TotalVisibleMemorySize)) * 100, 1)
         $uptime = (Get-Date) - $os.LastBootUpTime
 
-        $sharedFolderPath = '{{ heartbeat_shared_folder_path | replace("'", "''") }}'
-        $sharedFolderExists = $false
-        $sharedFolderAccessible = $false
-        $sharedFolderDirect = $false
-        $sharedFolderShareName = $null
-        $sharedFolderSharePath = $null
-        $sharedFolderUncPath = $null
-        $sharedFolderStatus = 'Indisponivel'
-        $sharedFolderError = $null
-
-        try {
-          $normalizedFolderPath = [IO.Path]::GetFullPath($sharedFolderPath).TrimEnd('\')
-          $sharedFolderExists = Test-Path -LiteralPath $normalizedFolderPath -PathType Container
-
-          $matchingShares = @(
-            Get-SmbShare -ErrorAction Stop |
-              Where-Object { $_.Path -and -not $_.Special } |
-              ForEach-Object {
-                $normalizedSharePath = [IO.Path]::GetFullPath($_.Path).TrimEnd('\')
-                $isDirect = $normalizedFolderPath -ieq $normalizedSharePath
-                $isInsideShare = $normalizedFolderPath.StartsWith(
-                  "$normalizedSharePath\",
-                  [StringComparison]::OrdinalIgnoreCase
-                )
-
-                if ($isDirect -or $isInsideShare) {
-                  [pscustomobject]@{
-                    name = $_.Name
-                    path = $_.Path
-                    normalized_path = $normalizedSharePath
-                    direct = $isDirect
-                  }
-                }
-              }
-          )
-
-          $folderShare = $matchingShares |
-            Sort-Object @{ Expression = 'direct'; Descending = $true },
-                        @{ Expression = { $_.normalized_path.Length }; Descending = $true } |
-            Select-Object -First 1
-
-          if (-not $sharedFolderExists) {
-            $sharedFolderStatus = 'Pasta inexistente'
-          } elseif ($null -ne $folderShare) {
-            $sharedFolderAccessible = $true
-            $sharedFolderDirect = [bool]$folderShare.direct
-            $sharedFolderShareName = $folderShare.name
-            $sharedFolderSharePath = $folderShare.path
-
-            $relativePath = $normalizedFolderPath.Substring($folderShare.normalized_path.Length).TrimStart('\')
-            $sharedFolderUncPath = "\\$env:COMPUTERNAME\$($folderShare.name)"
-            if ($relativePath) {
-              $sharedFolderUncPath += "\$relativePath"
-            }
-
-            $sharedFolderStatus = if ($sharedFolderDirect) {
-              'Compartilhada diretamente'
-            } else {
-              'Compartilhada via pasta superior'
-            }
-          } else {
-            $sharedFolderStatus = 'Nao compartilhada'
-          }
-        } catch {
-          $sharedFolderStatus = 'Erro ao consultar'
-          $sharedFolderError = $_.Exception.Message
-        }
-
         $disks = @(
           Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object {
             [pscustomobject]@{
@@ -266,15 +198,6 @@
           dhcp_status = $dhcpStatus
           dhcp_adapters = $dhcpAdapters
           dhcp_error = $dhcpError
-          shared_folder_path = $sharedFolderPath
-          shared_folder_exists = $sharedFolderExists
-          shared_folder_accessible = $sharedFolderAccessible
-          shared_folder_direct = $sharedFolderDirect
-          shared_folder_share_name = $sharedFolderShareName
-          shared_folder_share_path = $sharedFolderSharePath
-          shared_folder_unc_path = $sharedFolderUncPath
-          shared_folder_status = $sharedFolderStatus
-          shared_folder_error = $sharedFolderError
           disks = $disks
           collected_at = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
         } | ConvertTo-Json -Depth 5 -Compress
@@ -296,6 +219,98 @@
                  (heartbeat_raw.stdout | default('') | length > 0))
              else {} }}
       delegate_to: localhost
+
+    - name: Consultar compartilhamento da pasta fiscal
+      ansible.builtin.raw: |
+        $ProgressPreference = 'SilentlyContinue'
+        $folderPath = '{{ heartbeat_shared_folder_path | replace("'", "''") }}'
+        $exists = $false
+        $accessible = $false
+        $direct = $false
+        $shareName = $null
+        $sharePath = $null
+        $uncPath = $null
+        $status = 'Indisponivel'
+        $errorMessage = $null
+
+        try {
+          $target = [IO.Path]::GetFullPath($folderPath).TrimEnd('\')
+          $exists = Test-Path -LiteralPath $target -PathType Container
+          $matches = @(
+            Get-SmbShare -ErrorAction Stop | Where-Object { $_.Path -and -not $_.Special } | ForEach-Object {
+              $base = [IO.Path]::GetFullPath($_.Path).TrimEnd('\')
+              $isDirect = $target -ieq $base
+              $isChild = $target.StartsWith(($base + '\'), [StringComparison]::OrdinalIgnoreCase)
+              if ($isDirect -or $isChild) {
+                [pscustomobject]@{ name = $_.Name; path = $_.Path; base = $base; direct = $isDirect }
+              }
+            }
+          )
+
+          $share = $matches | Sort-Object -Property @{Expression={$_.direct}; Descending=$true}, @{Expression={$_.base.Length}; Descending=$true} | Select-Object -First 1
+
+          if (-not $exists) {
+            $status = 'Pasta inexistente'
+          } elseif ($null -eq $share) {
+            $status = 'Nao compartilhada'
+          } else {
+            $accessible = $true
+            $direct = [bool]$share.direct
+            $shareName = $share.name
+            $sharePath = $share.path
+            $relative = $target.Substring($share.base.Length).TrimStart('\')
+            $uncPath = "\\$env:COMPUTERNAME\$shareName"
+            if ($relative) { $uncPath += "\$relative" }
+            if ($direct) { $status = 'Compartilhada diretamente' }
+            else { $status = 'Compartilhada via pasta superior' }
+          }
+        } catch {
+          $status = 'Erro ao consultar'
+          $errorMessage = $_.Exception.Message
+        }
+
+        [pscustomobject]@{
+          shared_folder_path = $folderPath
+          shared_folder_exists = $exists
+          shared_folder_accessible = $accessible
+          shared_folder_direct = $direct
+          shared_folder_share_name = $shareName
+          shared_folder_share_path = $sharePath
+          shared_folder_unc_path = $uncPath
+          shared_folder_status = $status
+          shared_folder_error = $errorMessage
+        } | ConvertTo-Json -Compress
+      register: heartbeat_shared_folder_raw
+      changed_when: false
+      failed_when: false
+      when: heartbeat_collection_ok
+
+    - name: Normalizar verificacao da pasta fiscal
+      ansible.builtin.set_fact:
+        heartbeat_shared_folder_data: >-
+          {{ (heartbeat_shared_folder_raw.stdout | trim | from_json)
+             if ((heartbeat_shared_folder_raw.rc | default(1) == 0) and
+                 (heartbeat_shared_folder_raw.stdout | default('') | trim | length > 0))
+             else {
+               'shared_folder_path': heartbeat_shared_folder_path,
+               'shared_folder_exists': false,
+               'shared_folder_accessible': false,
+               'shared_folder_direct': false,
+               'shared_folder_share_name': none,
+               'shared_folder_share_path': none,
+               'shared_folder_unc_path': none,
+               'shared_folder_status': 'Erro ao consultar',
+               'shared_folder_error': 'Falha na tarefa PowerShell'
+             } }}
+      delegate_to: localhost
+      when: heartbeat_collection_ok
+
+    - name: Adicionar verificacao da pasta aos dados coletados
+      ansible.builtin.set_fact:
+        heartbeat_data: >-
+          {{ heartbeat_data | combine(heartbeat_shared_folder_data, recursive=true) }}
+      delegate_to: localhost
+      when: heartbeat_collection_ok
 
     - name: Consultar Defender e Firewall sem afetar status online
       ansible.builtin.raw: |
