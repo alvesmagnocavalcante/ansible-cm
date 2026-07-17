@@ -437,8 +437,7 @@
         heartbeat_report_hotel_name: >-
           {{ heartbeat_report_hotel |
              default(hotel_name |
-             default(heartbeat_report_name |
-             default(heartbeat_target_group | default('', true), true), true), true), true) |
+             default(heartbeat_target_group | default('windows_hosts', true), true), true) |
              string | trim }}
 
     - name: Definir titulo do relatorio
