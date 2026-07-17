@@ -438,11 +438,7 @@
           {{ heartbeat_report_hotel |
              default(hotel_name |
              default(heartbeat_report_name |
-             default(lookup('ansible.builtin.env', 'HEARTBEAT_REPORT_HOTEL') |
-             default(lookup('ansible.builtin.env', 'heartbeat_report_hotel') |
-             default(lookup('ansible.builtin.env', 'HOTEL_NAME') |
-             default(lookup('ansible.builtin.env', 'hotel_name') |
-             default(heartbeat_target_group | default('', true), true), true), true), true), true), true), true) |
+             default(heartbeat_target_group | default('', true), true), true), true), true) |
              string | trim }}
 
     - name: Definir titulo do relatorio
@@ -515,9 +511,7 @@
         secure: "{{ smtp_secure }}"
         from: "{{ email_from }}"
         to: "{{ email_to.split(',') | map('trim') | list }}"
-        subject: >-
-          {{ '[' ~ heartbeat_report_hotel_name ~ '] ' if heartbeat_report_hotel_name | length > 0 else '' }}{{ email_subject }} -
-          {{ ansible_facts['date_time']['date'] }}
+        subject: "{{ heartbeat_report_title }} - {{ ansible_facts['date_time']['date'] }}"
         subtype: html
         body: "{{ heartbeat_report_html }}"
       no_log: true
