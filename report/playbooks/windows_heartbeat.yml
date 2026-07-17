@@ -4,6 +4,9 @@
   gather_facts: false
   ignore_unreachable: true
 
+  vars:
+    heartbeat_shared_folder_path: 'C:\Micros\Simphony\WebServer\fiscal\nfce\request'
+
   tasks:
     - name: Criar grupo de relatorio somente na memoria do controlador
       ansible.builtin.add_host:
@@ -125,6 +128,74 @@
         $memoryUsed = [math]::Round((1 - ($os.FreePhysicalMemory / $os.TotalVisibleMemorySize)) * 100, 1)
         $uptime = (Get-Date) - $os.LastBootUpTime
 
+        $sharedFolderPath = '{{ heartbeat_shared_folder_path | replace("'", "''") }}'
+        $sharedFolderExists = $false
+        $sharedFolderAccessible = $false
+        $sharedFolderDirect = $false
+        $sharedFolderShareName = $null
+        $sharedFolderSharePath = $null
+        $sharedFolderUncPath = $null
+        $sharedFolderStatus = 'Indisponivel'
+        $sharedFolderError = $null
+
+        try {
+          $normalizedFolderPath = [IO.Path]::GetFullPath($sharedFolderPath).TrimEnd('\')
+          $sharedFolderExists = Test-Path -LiteralPath $normalizedFolderPath -PathType Container
+
+          $matchingShares = @(
+            Get-SmbShare -ErrorAction Stop |
+              Where-Object { $_.Path -and -not $_.Special } |
+              ForEach-Object {
+                $normalizedSharePath = [IO.Path]::GetFullPath($_.Path).TrimEnd('\')
+                $isDirect = $normalizedFolderPath -ieq $normalizedSharePath
+                $isInsideShare = $normalizedFolderPath.StartsWith(
+                  "$normalizedSharePath\",
+                  [StringComparison]::OrdinalIgnoreCase
+                )
+
+                if ($isDirect -or $isInsideShare) {
+                  [pscustomobject]@{
+                    name = $_.Name
+                    path = $_.Path
+                    normalized_path = $normalizedSharePath
+                    direct = $isDirect
+                  }
+                }
+              }
+          )
+
+          $folderShare = $matchingShares |
+            Sort-Object @{ Expression = 'direct'; Descending = $true },
+                        @{ Expression = { $_.normalized_path.Length }; Descending = $true } |
+            Select-Object -First 1
+
+          if (-not $sharedFolderExists) {
+            $sharedFolderStatus = 'Pasta inexistente'
+          } elseif ($null -ne $folderShare) {
+            $sharedFolderAccessible = $true
+            $sharedFolderDirect = [bool]$folderShare.direct
+            $sharedFolderShareName = $folderShare.name
+            $sharedFolderSharePath = $folderShare.path
+
+            $relativePath = $normalizedFolderPath.Substring($folderShare.normalized_path.Length).TrimStart('\')
+            $sharedFolderUncPath = "\\$env:COMPUTERNAME\$($folderShare.name)"
+            if ($relativePath) {
+              $sharedFolderUncPath += "\$relativePath"
+            }
+
+            $sharedFolderStatus = if ($sharedFolderDirect) {
+              'Compartilhada diretamente'
+            } else {
+              'Compartilhada via pasta superior'
+            }
+          } else {
+            $sharedFolderStatus = 'Nao compartilhada'
+          }
+        } catch {
+          $sharedFolderStatus = 'Erro ao consultar'
+          $sharedFolderError = $_.Exception.Message
+        }
+
         $disks = @(
           Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object {
             [pscustomobject]@{
@@ -195,6 +266,15 @@
           dhcp_status = $dhcpStatus
           dhcp_adapters = $dhcpAdapters
           dhcp_error = $dhcpError
+          shared_folder_path = $sharedFolderPath
+          shared_folder_exists = $sharedFolderExists
+          shared_folder_accessible = $sharedFolderAccessible
+          shared_folder_direct = $sharedFolderDirect
+          shared_folder_share_name = $sharedFolderShareName
+          shared_folder_share_path = $sharedFolderSharePath
+          shared_folder_unc_path = $sharedFolderUncPath
+          shared_folder_status = $sharedFolderStatus
+          shared_folder_error = $sharedFolderError
           disks = $disks
           collected_at = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
         } | ConvertTo-Json -Depth 5 -Compress
@@ -352,6 +432,7 @@
         heartbeat_offline_hosts: []
         heartbeat_alert_hosts: []
         heartbeat_defender_alert_hosts: []
+        heartbeat_shared_folder_hosts: []
 
     - name: Classificar hosts online e offline
       ansible.builtin.set_fact:
@@ -395,6 +476,16 @@
         ((current_data.defender_error | default('', true) | string | length) > 0) or
         ((current_data.firewall_error | default('', true) | string | length) > 0)
 
+    - name: Identificar hosts com a pasta fiscal compartilhada
+      ansible.builtin.set_fact:
+        heartbeat_shared_folder_hosts: "{{ heartbeat_shared_folder_hosts + [item] }}"
+      loop: "{{ heartbeat_online_hosts }}"
+      loop_control:
+        label: "{{ item }}"
+      vars:
+        current_data: "{{ hostvars[item].heartbeat_data | default({}) }}"
+      when: current_data.shared_folder_accessible | default(false) | bool
+
     - name: Exibir status de Defender e Firewall
       ansible.builtin.debug:
         msg: >-
@@ -430,7 +521,8 @@
           online={{ heartbeat_online_hosts | length }},
           offline={{ heartbeat_offline_hosts | length }},
           alertas={{ heartbeat_alert_hosts | length }},
-          alertas_defender_firewall={{ heartbeat_defender_alert_hosts | length }}.
+          alertas_defender_firewall={{ heartbeat_defender_alert_hosts | length }},
+          pasta_compartilhada={{ heartbeat_shared_folder_hosts | length }}/{{ heartbeat_online_hosts | length }}.
 
     - name: Definir nome do hotel no relatorio
       ansible.builtin.set_fact:
