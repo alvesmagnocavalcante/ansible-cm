@@ -34,10 +34,12 @@
       ansible.builtin.debug:
         var: install_dir
 
-    - name: Procurar arquivos .log recursivamente (apenas listar, nao abre)
+    - name: Procurar arquivos de log recursivamente (apenas listar, nao abre)
       ansible.windows.win_find:
         paths: "{{ install_dir }}"
-        patterns: "*.log"
+        patterns:
+          - "*.log"
+          - "Log_*.txt"
         recurse: yes
         age: "-2d"          # so arquivos modificados nos ultimos 2 dias (ajuste se quiser)
       register: found_logs
