@@ -1,6 +1,6 @@
 ---
 - name: Monitorar logs do Agendador de Tarefas
-  hosts: windows
+  hosts: windows_hosts
   gather_facts: false
 
   vars:
