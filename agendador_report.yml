@@ -5,7 +5,7 @@
 
   vars:
     tarefa_monitorada: "SalesMix"
-    periodo_minutos: 60
+    periodo_minutos: 300
     log_agendador: "Microsoft-Windows-TaskScheduler/Operational"
 
   tasks:
