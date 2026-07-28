@@ -1,0 +1,57 @@
+---
+- name: Monitorar Agendador de Tarefas do Windows
+  hosts: windows_hosts
+  gather_facts: false
+
+  vars:
+    periodo_minutos: 60
+
+  tasks:
+    - name: Habilitar log operacional do Agendador
+      ansible.windows.win_powershell:
+        script: |
+          $log = Get-WinEvent -ListLog "Microsoft-Windows-TaskScheduler/Operational"
+
+          if (-not $log.IsEnabled) {
+              $log.IsEnabled = $true
+              $log.SaveChanges()
+              $Ansible.Changed = $true
+          }
+          else {
+              $Ansible.Changed = $false
+          }
+      become: true
+      become_method: runas
+      become_user: SYSTEM
+
+    - name: Consultar erros recentes
+      ansible.windows.win_powershell:
+        script: |
+          $inicio = (Get-Date).AddMinutes(-{{ periodo_minutos }})
+
+          $eventos = Get-WinEvent -FilterHashtable @{
+              LogName   = "Microsoft-Windows-TaskScheduler/Operational"
+              StartTime = $inicio
+              Level     = 1, 2, 3
+          } -ErrorAction SilentlyContinue
+
+          $Ansible.Result = @(
+              $eventos | Select-Object @{
+                  Name="Data"
+                  Expression={$_.TimeCreated.ToString("yyyy-MM-dd HH:mm:ss")}
+              }, Id, LevelDisplayName, Message
+          )
+
+          $Ansible.Changed = $false
+      register: resultado_agendador
+
+    - name: Mostrar erros encontrados
+      ansible.builtin.debug:
+        var: resultado_agendador.result
+
+    - name: Avisar quando houver erro
+      ansible.builtin.fail:
+        msg: >-
+          Foram encontrados {{ resultado_agendador.result | length }}
+          erros no Agendador de Tarefas.
+      when: resultado_agendador.result | length > 0
