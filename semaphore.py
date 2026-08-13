@@ -1,1 +1,1 @@
-print("Olá Semaphore)
+print("Olá Semaphore")
