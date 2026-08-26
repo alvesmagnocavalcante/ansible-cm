@@ -1,0 +1,65 @@
+---
+- name: Conectar VPN do hotel
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Validar VPN solicitada
+      ansible.builtin.assert:
+        that:
+          - vpn_name is defined
+          - vpn_name in ['charme', 'cumbuco', 'taiba']
+        fail_msg: "vpn_name deve ser charme, cumbuco ou taiba."
+
+    - name: Iniciar VPN
+      ansible.builtin.command:
+        argv:
+          - sudo
+          - -n
+          - /usr/bin/systemctl
+          - start
+          - "fortivpn@{{ vpn_name }}.service"
+      changed_when: true
+
+    - name: Aguardar VPN ficar ativa
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/systemctl
+          - is-active
+          - "fortivpn@{{ vpn_name }}.service"
+      register: vpn_service
+      changed_when: false
+      retries: 30
+      delay: 2
+      until: vpn_service.rc == 0
+
+    - name: Aguardar interface PPP
+      ansible.builtin.command:
+        argv:
+          - /usr/sbin/ip
+          - link
+          - show
+          - ppp0
+      register: vpn_interface
+      changed_when: false
+      retries: 30
+      delay: 2
+      until: vpn_interface.rc == 0
+
+- name: Executar heartbeat existente
+  ansible.builtin.import_playbook: windows_heartbeat.yml
+
+- name: Desconectar VPN do hotel
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Parar VPN
+      ansible.builtin.command:
+        argv:
+          - sudo
+          - -n
+          - /usr/bin/systemctl
+          - stop
+          - "fortivpn@{{ vpn_name }}.service"
+      changed_when: true
