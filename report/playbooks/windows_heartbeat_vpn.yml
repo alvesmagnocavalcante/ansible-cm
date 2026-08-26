@@ -1,24 +1,167 @@
-    - name: Aguardar rota do primeiro host passar pela VPN
+---
+- name: Conectar VPN do hotel
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Validar variaveis da VPN
+      ansible.builtin.assert:
+        that:
+          - vpn_name is defined
+          - vpn_name in ['charme', 'cumbuco', 'taiba']
+          - heartbeat_target_group is defined
+          - heartbeat_target_group in groups
+          - groups[heartbeat_target_group] | length > 0
+        fail_msg: >-
+          Configure vpn_name como charme, cumbuco ou taiba e informe
+          um heartbeat_target_group existente no inventario.
+
+    - name: Garantir que as outras VPNs estejam desconectadas
+      ansible.builtin.command:
+        argv:
+          - sudo
+          - -n
+          - /usr/bin/systemctl
+          - stop
+          - "fortivpn@{{ item }}.service"
+      loop:
+        - charme
+        - cumbuco
+        - taiba
+      when: item != vpn_name
+      changed_when: false
+      failed_when: false
+
+    - name: Limpar estado de falha da VPN
+      ansible.builtin.command:
+        argv:
+          - sudo
+          - -n
+          - /usr/bin/systemctl
+          - reset-failed
+          - "fortivpn@{{ vpn_name }}.service"
+      changed_when: false
+      failed_when: false
+
+    - name: Iniciar VPN
+      ansible.builtin.command:
+        argv:
+          - sudo
+          - -n
+          - /usr/bin/systemctl
+          - start
+          - "fortivpn@{{ vpn_name }}.service"
+      changed_when: true
+
+    - name: Aguardar servico VPN ficar ativo
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/systemctl
+          - is-active
+          - "fortivpn@{{ vpn_name }}.service"
+      register: vpn_service_status
+      changed_when: false
+      retries: 30
+      delay: 2
+      until: vpn_service_status.rc == 0
+
+    - name: Aguardar criacao da interface PPP
+      ansible.builtin.command:
+        argv:
+          - /usr/sbin/ip
+          - link
+          - show
+          - ppp0
+      register: vpn_ppp_status
+      changed_when: false
+      retries: 30
+      delay: 2
+      until: vpn_ppp_status.rc == 0
+
+    - name: Definir host usado para validar a rota
+      ansible.builtin.set_fact:
+        vpn_probe_host: >-
+          {{
+            hostvars[groups[heartbeat_target_group][0]].ansible_host
+            | default(groups[heartbeat_target_group][0])
+          }}
+
+    - name: Exibir host usado para validar a VPN
+      ansible.builtin.debug:
+        msg: "Validando rota da VPN para {{ vpn_probe_host }}."
+
+    - name: Aguardar rota do hotel passar pela VPN
       ansible.builtin.command:
         argv:
           - /usr/sbin/ip
           - route
           - get
           - "{{ vpn_probe_host }}"
-      vars:
-        vpn_probe_host: >-
-          {{
-            hostvars[groups[heartbeat_target_group][0]].ansible_host
-            | default(groups[heartbeat_target_group][0])
-          }}
-      register: vpn_route
+      register: vpn_route_status
       changed_when: false
       retries: 30
       delay: 2
       until:
-        - vpn_route.rc == 0
-        - "'dev ppp0' in vpn_route.stdout"
+        - vpn_route_status.rc == 0
+        - "'dev ppp0' in vpn_route_status.stdout"
+
+    - name: Exibir rota selecionada
+      ansible.builtin.debug:
+        var: vpn_route_status.stdout
 
     - name: Aguardar estabilizacao do tunel
       ansible.builtin.pause:
         seconds: 3
+
+    - name: Validar porta WinRM pelo tunel
+      ansible.builtin.wait_for:
+        host: "{{ vpn_probe_host }}"
+        port: 5985
+        state: started
+        timeout: 30
+      register: vpn_winrm_probe
+
+    - name: Informar que a VPN esta pronta
+      ansible.builtin.debug:
+        msg: >-
+          VPN {{ vpn_name }} conectada. A rota para {{ vpn_probe_host }}
+          passa pela ppp0 e a porta WinRM 5985 esta acessivel.
+
+
+- name: Executar playbook de heartbeat existente
+  ansible.builtin.import_playbook: windows_heartbeat.yml
+
+
+- name: Desconectar VPN do hotel
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Parar VPN
+      ansible.builtin.command:
+        argv:
+          - sudo
+          - -n
+          - /usr/bin/systemctl
+          - stop
+          - "fortivpn@{{ vpn_name }}.service"
+      changed_when: true
+
+    - name: Aguardar encerramento da VPN
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/systemctl
+          - is-active
+          - "fortivpn@{{ vpn_name }}.service"
+      register: vpn_stop_status
+      changed_when: false
+      failed_when: false
+      retries: 15
+      delay: 2
+      until: vpn_stop_status.stdout in ['inactive', 'failed']
+
+    - name: Confirmar desconexao
+      ansible.builtin.debug:
+        msg: "VPN {{ vpn_name }} desconectada."
