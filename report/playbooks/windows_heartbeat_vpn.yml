@@ -47,7 +47,7 @@
       until: vpn_interface.rc == 0
 
 - name: Executar heartbeat existente
-  ansible.builtin.import_playbook: windows_heartbeat.yml
+  ansible.builtin.import_playbook: report/playbooks/windows_heartbeat.yml
 
 - name: Desconectar VPN do hotel
   hosts: localhost
