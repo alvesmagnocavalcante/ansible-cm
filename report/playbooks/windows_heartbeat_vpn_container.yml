@@ -25,6 +25,34 @@
             hostvars[groups[heartbeat_target_group][0]].ansible_host
             | default(groups[heartbeat_target_group][0])
           }}
+        vpn_username_env_name: >-
+          VPN_{{ vpn_name | upper | replace('-', '_') }}_USERNAME
+        vpn_password_env_name: >-
+          VPN_{{ vpn_name | upper | replace('-', '_') }}_PASSWORD
+
+    - name: Validar presenca dos Secrets da VPN sem revelar valores
+      ansible.builtin.assert:
+        that:
+          - lookup('ansible.builtin.env', vpn_username_env_name, default='') | length > 0
+          - lookup('ansible.builtin.env', vpn_password_env_name, default='') | length > 0
+        fail_msg: >-
+          Secrets ausentes. Cadastre {{ vpn_username_env_name }} e
+          {{ vpn_password_env_name }} como variaveis de ambiente secretas e associe
+          o Variable Group ao template.
+
+    - name: Confirmar que o perfil VPN esta montado
+      ansible.builtin.stat:
+        path: "/etc/openfortivpn/profiles/{{ vpn_name }}.conf"
+      register: vpn_profile
+
+    - name: Exigir perfil VPN legivel
+      ansible.builtin.assert:
+        that:
+          - vpn_profile.stat.exists
+          - vpn_profile.stat.isreg
+          - vpn_profile.stat.readable
+        fail_msg: >-
+          Perfil /etc/openfortivpn/profiles/{{ vpn_name }}.conf ausente ou ilegivel.
 
     - name: Limpar qualquer VPN anterior
       ansible.builtin.command:
