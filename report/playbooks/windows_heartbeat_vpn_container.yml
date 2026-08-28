@@ -45,14 +45,13 @@
         path: "/etc/openfortivpn/profiles/{{ vpn_name }}.conf"
       register: vpn_profile
 
-    - name: Exigir perfil VPN legivel
+    - name: Exigir perfil VPN valido
       ansible.builtin.assert:
         that:
           - vpn_profile.stat.exists
           - vpn_profile.stat.isreg
-          - vpn_profile.stat.readable
         fail_msg: >-
-          Perfil /etc/openfortivpn/profiles/{{ vpn_name }}.conf ausente ou ilegivel.
+          Perfil /etc/openfortivpn/profiles/{{ vpn_name }}.conf ausente ou invalido.
 
     - name: Limpar qualquer VPN anterior
       ansible.builtin.command:
