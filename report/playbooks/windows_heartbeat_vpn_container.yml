@@ -1,0 +1,87 @@
+---
+- name: Preparar e validar a VPN do heartbeat
+  hosts: localhost
+  gather_facts: false
+  vars:
+    allowed_vpn_names:
+      - charme
+      - cumbuco
+      - taiba
+  tasks:
+    - name: Validar parametros obrigatorios
+      ansible.builtin.assert:
+        that:
+          - vpn_name is defined
+          - vpn_name in allowed_vpn_names
+          - heartbeat_target_group is defined
+          - heartbeat_target_group in groups
+          - groups[heartbeat_target_group] | length > 0
+        fail_msg: "Informe vpn_name valido e um heartbeat_target_group existente e nao vazio."
+
+    - name: Definir o primeiro host real para prova da VPN
+      ansible.builtin.set_fact:
+        vpn_probe_host: >-
+          {{
+            hostvars[groups[heartbeat_target_group][0]].ansible_host
+            | default(groups[heartbeat_target_group][0])
+          }}
+
+    - name: Limpar qualquer VPN anterior
+      ansible.builtin.command:
+        argv: [sudo, /usr/local/sbin/semaphore-vpn, stop-all]
+      changed_when: true
+
+    - name: Conectar a VPN escolhida
+      ansible.builtin.command:
+        argv: [sudo, -E, /usr/local/sbin/semaphore-vpn, start, "{{ vpn_name }}"]
+      no_log: true
+      changed_when: true
+
+    - name: Confirmar processo da VPN
+      ansible.builtin.command:
+        argv: [sudo, /usr/local/sbin/semaphore-vpn, status, "{{ vpn_name }}"]
+      register: vpn_status
+      changed_when: false
+      retries: 10
+      delay: 2
+      until: vpn_status.rc == 0
+
+    - name: Aguardar a interface ppp0
+      ansible.builtin.command: ip link show ppp0
+      register: ppp_link
+      changed_when: false
+      retries: 30
+      delay: 2
+      until: ppp_link.rc == 0
+
+    - name: Consultar rota para o primeiro equipamento
+      ansible.builtin.command:
+        argv: [ip, route, get, "{{ vpn_probe_host }}"]
+      register: vpn_route
+      changed_when: false
+
+    - name: Exigir que a rota utilize ppp0
+      ansible.builtin.assert:
+        that:
+          - "'dev ppp0' in vpn_route.stdout"
+        fail_msg: "A rota para {{ vpn_probe_host }} nao utiliza ppp0: {{ vpn_route.stdout }}"
+
+    - name: Aguardar WinRM no primeiro equipamento
+      ansible.builtin.wait_for:
+        host: "{{ vpn_probe_host }}"
+        port: 5985
+        connect_timeout: 5
+        timeout: 30
+
+- name: Executar heartbeat existente
+  ansible.builtin.import_playbook: windows_heartbeat.yml
+
+- name: Encerrar a VPN depois do heartbeat
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Desconectar todas as VPNs
+      ansible.builtin.command:
+        argv: [sudo, /usr/local/sbin/semaphore-vpn, stop-all]
+      changed_when: true
+      failed_when: false
