@@ -10,6 +10,29 @@
     ifc_user: 'interfaces'
 
   tasks:
+    - name: Resolver conta Windows do IFC8
+      ansible.windows.win_powershell:
+        error_action: stop
+        parameters:
+          User: "{{ ifc_user }}"
+        script: |
+          param([string]$User)
+          $account = $User
+          if ($account.StartsWith('.\')) {
+            $account = "$env:COMPUTERNAME\$($account.Substring(2))"
+          } elseif ($account -notmatch '[\\@]') {
+            $account = "$env:COMPUTERNAME\$account"
+          }
+          try {
+            $identity = [System.Security.Principal.NTAccount]::new($account)
+            $sid = $identity.Translate([System.Security.Principal.SecurityIdentifier])
+          } catch {
+            throw "Conta '$account' nao encontrada. Configure ifc_user como COMPUTADOR\usuario ou DOMINIO\usuario."
+          }
+          $Ansible.Result = @{ account = $account; sid = $sid.Value }
+          $Ansible.Changed = $false
+      register: ifc_account
+
     - name: Garantir tarefa de inicialização do IFC8
       community.windows.win_scheduled_task:
         name: "{{ ifc_task_name }}"
@@ -20,8 +43,8 @@
             working_directory: 'C:\Fidelio\Ifc8.Net\IfcApplication'
         triggers:
           - type: logon
-            user_id: "{{ ifc_user }}"
-        username: "{{ ifc_user }}"
+            user_id: "{{ ifc_account.result.sid }}"
+        username: "{{ ifc_account.result.account }}"
         logon_type: interactive_token
         run_level: highest
         multiple_instances: 2
