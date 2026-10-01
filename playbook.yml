@@ -1,6 +1,6 @@
 ---
 - name: Verificar e iniciar Oracle IFC8 SPH
-  hosts: ifc8_windows
+  hosts: windows_hosts
   gather_facts: false
 
   vars:
