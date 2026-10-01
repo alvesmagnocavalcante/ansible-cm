@@ -7,7 +7,9 @@ param(
     [ValidateRange(30, 86400)][int]$RepeatAlertSeconds = 300,
     [ValidateRange(0, 86400)][int]$MaxLogAgeSeconds = 0,
     [switch]$Once,
-    [switch]$NoPopup
+    [switch]$NoPopup,
+    [switch]$Telegram,
+    [switch]$TestTelegram
 )
 
 $ErrorActionPreference = 'Stop'
@@ -63,6 +65,53 @@ function Get-IfcHealth {
     }
 }
 
+function Send-IfcTelegram {
+    [CmdletBinding()]
+    param([string]$Message)
+    try {
+        $body = @{ chat_id = $env:IFC8_TELEGRAM_CHAT_ID; text = $Message } | ConvertTo-Json -Compress
+        $response = Invoke-RestMethod -Method Post -Uri "https://api.telegram.org/bot$($env:IFC8_TELEGRAM_TOKEN)/sendMessage" `
+            -ContentType 'application/json; charset=utf-8' -Body ([Text.Encoding]::UTF8.GetBytes($body)) -TimeoutSec 15
+        if (-not $response.ok) { throw 'Telegram recusou o envio.' }
+        return $true
+    } catch {
+        # Do not print exception details: the request URL contains the bot token.
+        Write-Warning 'Falha ao enviar Telegram. Verifique token, chat_id, DNS e acesso HTTPS a api.telegram.org.'
+        return $false
+    }
+}
+
+function Invoke-IfcTelegramNotification {
+    param($Health, [datetime]$Now, [hashtable]$State)
+    $recovery = $Health.Status -eq 'ONLINE' -and $State.Status -and $State.Status -ne 'ONLINE'
+    $problem = $Health.Status -ne 'ONLINE' -and (
+        $Health.Status -ne $State.Status -or ($Now - $State.LastSuccess).TotalSeconds -ge $RepeatAlertSeconds)
+    if (($recovery -or $problem) -and ($Now - $State.LastAttempt).TotalSeconds -ge 30) {
+        $State.LastAttempt = $Now
+        $reason = $Health.Reason
+        if ($reason.Length -gt 3000) { $reason = $reason.Substring(0, 3000) }
+        $message = "IFC8 SPH [$($Health.Status)]`nServidor: $env:COMPUTERNAME`nHorario: $($Now.ToString('yyyy-MM-dd HH:mm:ss'))`n$reason"
+        if (Send-IfcTelegram $message) {
+            $State.Status = $Health.Status
+            $State.LastSuccess = $Now
+        }
+    }
+}
+
+if ($Telegram -or $TestTelegram) {
+    if ([string]::IsNullOrWhiteSpace($env:IFC8_TELEGRAM_TOKEN) -or [string]::IsNullOrWhiteSpace($env:IFC8_TELEGRAM_CHAT_ID)) {
+        throw 'Configure IFC8_TELEGRAM_TOKEN e IFC8_TELEGRAM_CHAT_ID no ambiente do usuario que executa o monitor.'
+    }
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+}
+if ($TestTelegram) {
+    if (-not (Send-IfcTelegram "Teste do monitor IFC8 SPH - servidor $env:COMPUTERNAME")) {
+        throw 'Teste Telegram falhou.'
+    }
+    Write-Host 'Mensagem de teste enviada ao Telegram.'
+    return
+}
+
 if ($Once) {
     Get-IfcHealth
     return
@@ -80,10 +129,14 @@ try {
     }
     $lastStatus = ''
     $lastAlert = [datetime]::MinValue
+    $telegramState = @{ Status = ''; LastSuccess = [datetime]::MinValue; LastAttempt = [datetime]::MinValue }
     while ($true) {
         $health = Get-IfcHealth
         $now = Get-Date
         $changed = $health.Status -ne $lastStatus
+        if ($Telegram) {
+            Invoke-IfcTelegramNotification -Health $health -Now $now -State $telegramState
+        }
         if ($changed) {
             Write-Host ('{0:yyyy-MM-dd HH:mm:ss} [{1}] {2}' -f $now, $health.Status, $health.Reason)
         }

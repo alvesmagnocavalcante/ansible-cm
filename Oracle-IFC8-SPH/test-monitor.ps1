@@ -58,3 +58,45 @@ Assert-Status 'ONLINE'
 $MaxLogAgeSeconds = 180
 Assert-Status 'INDETERMINADO'
 Write-Host 'OK: 9 cenarios de processo, log, queda, recuperacao e idade do log.'
+
+$env:IFC8_TELEGRAM_TOKEN = 'token-ficticio-de-teste'
+$env:IFC8_TELEGRAM_CHAT_ID = '-12345'
+$script:sendCount = 0
+$script:sendFails = $false
+$script:apiRejects = $false
+function Invoke-RestMethod {
+    param($Method, $Uri, $ContentType, $Body, $TimeoutSec)
+    $script:sendCount++
+    if ($Method -ne 'Post' -or $TimeoutSec -ne 15) { throw 'Requisicao incorreta' }
+    $payload = [Text.Encoding]::UTF8.GetString($Body) | ConvertFrom-Json
+    if ($payload.chat_id -ne '-12345' -or -not $payload.text) { throw 'Payload incorreto' }
+    if ($script:sendFails) { throw "Erro HTTP com token: $Uri" }
+    [pscustomobject]@{ ok = -not $script:apiRejects }
+}
+
+$state = @{ Status = ''; LastSuccess = [datetime]::MinValue; LastAttempt = [datetime]::MinValue }
+$now = Get-Date
+$online = [pscustomobject]@{ Status = 'ONLINE'; Reason = 'Alive/Sync' }
+$offline = [pscustomobject]@{ Status = 'OFFLINE'; Reason = 'pms.comm=Off' }
+Invoke-IfcTelegramNotification $online $now $state
+if ($script:sendCount -ne 0) { throw 'Nao deve enviar ONLINE inicial' }
+Invoke-IfcTelegramNotification $offline $now $state
+Invoke-IfcTelegramNotification $offline $now.AddSeconds(30) $state
+if ($script:sendCount -ne 1 -or $state.Status -ne 'OFFLINE') { throw 'Alerta inicial/duplicado incorreto' }
+Invoke-IfcTelegramNotification $offline $now.AddSeconds(300) $state
+if ($script:sendCount -ne 2) { throw 'Lembrete nao enviado' }
+Invoke-IfcTelegramNotification $online $now.AddSeconds(330) $state
+if ($script:sendCount -ne 3 -or $state.Status -ne 'ONLINE') { throw 'Recuperacao nao enviada' }
+$script:sendFails = $true
+$warnings = @(Invoke-IfcTelegramNotification $offline $now.AddSeconds(360) $state 3>&1)
+if (($warnings | Out-String).Contains($env:IFC8_TELEGRAM_TOKEN)) { throw 'Token exposto no aviso de erro' }
+if ($state.Status -ne 'ONLINE') { throw 'Envio com falha marcado como sucesso' }
+$script:sendFails = $false
+Invoke-IfcTelegramNotification $offline $now.AddSeconds(375) $state
+if ($script:sendCount -ne 4) { throw 'Retry antecipado' }
+Invoke-IfcTelegramNotification $offline $now.AddSeconds(390) $state
+if ($script:sendCount -ne 5 -or $state.Status -ne 'OFFLINE') { throw 'Retry nao executado' }
+$script:apiRejects = $true
+$accepted = Send-IfcTelegram 'Teste recusado pela API' -WarningAction SilentlyContinue
+if ($accepted) { throw 'Resposta ok=false aceita' }
+Write-Host 'OK: Telegram com API simulada: payload, repeticao, recuperacao, retry e token protegido.'
