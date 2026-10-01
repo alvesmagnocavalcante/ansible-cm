@@ -1,4 +1,3 @@
 ---
-collections:
-  - name: ansible.windows
-  - name: community.windows
+# As collections necessarias ja fazem parte da imagem oficial do Semaphore.
+collections: []
