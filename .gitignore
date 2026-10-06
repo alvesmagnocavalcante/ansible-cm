@@ -1,0 +1,8 @@
+# Credenciais locais de monitoramento.
+.env
+.env.*
+!.env.example
+
+# Artefatos locais; o executavel Windows e publicado para o Semaphore.
+Oracle-IFC8-SPH/bin/*
+!Oracle-IFC8-SPH/bin/monitor-ifc8.exe

@@ -1,0 +1,195 @@
+---
+- name: Instalar monitor IFC8 Go com Telegram
+  hosts: windows_hosts
+  gather_facts: false
+  serial: 1
+  any_errors_fatal: true
+  vars:
+    agent_directory: 'C:\MonitorIFC8'
+    agent_task: MonitorIFC8Telegram
+    agent_binary_src: '{{ ifc_project_dir | default(playbook_dir + "/..") }}/bin/monitor-ifc8.exe'
+    agent_interval: 30s
+    agent_repeat_interval: 5m
+    ifc_log_max_age: 0s
+    ifc_config_path: 'C:\Fidelio\Ifc8.Net\IfcApplication\SPH\Ifc8NetConfigSPH.Xml'
+    ifc_log_path: 'C:\Fidelio\Ifc8.Net\IfcApplication\SPH\M87POS_SPH_Log.evt'
+    telegram_bot_token: "{{ lookup('ansible.builtin.env', 'TELEGRAM_BOT_TOKEN') }}"
+    telegram_chat_id: '-1004428450910'
+    telegram_topics:
+      Taiba: 26
+      Charme: 27
+      Magna: 29
+      Acaraizinho: 30
+      Wind: 28
+  tasks:
+    - name: Validar token sem exibir seu valor
+      ansible.builtin.assert:
+        that:
+          - telegram_bot_token is match('^[0-9]+:[A-Za-z0-9_-]+$')
+        fail_msg: Configure TELEGRAM_BOT_TOKEN nos Secrets do Semaphore.
+      no_log: true
+
+    - name: Validar destino e pasta dedicada
+      ansible.builtin.assert:
+        that:
+          - agent_topic | default('') in telegram_topics
+          - telegram_chat_id | string is match('^-?[0-9]+$')
+          - telegram_topics[agent_topic] | int > 0
+          - agent_directory == 'C:\MonitorIFC8'
+          - agent_task == 'MonitorIFC8Telegram'
+          - ifc_config_path is match('^[A-Za-z]:\\[^\r\n]+$')
+          - ifc_log_path is match('^[A-Za-z]:\\[^\r\n]+$')
+        fail_msg: Confira agent_topic, os IDs do Telegram e os caminhos absolutos do IFC8.
+
+    - name: Verificar executavel no runner
+      ansible.builtin.stat:
+        path: '{{ agent_binary_src }}'
+      delegate_to: localhost
+      register: agent_binary
+
+    - name: Exigir artefato compilado
+      ansible.builtin.assert:
+        that:
+          - agent_binary.stat.isreg | default(false)
+        fail_msg: Compile Oracle-IFC8-SPH/bin/monitor-ifc8.exe ou informe agent_binary_src.
+
+    - name: Testar acesso ao Windows
+      ansible.windows.win_ping:
+
+    - name: Validar arquitetura x64
+      ansible.windows.win_powershell:
+        error_action: stop
+        script: |
+          $Ansible.Changed = $false
+          if (-not [Environment]::Is64BitOperatingSystem) { throw 'O monitor exige Windows x64.' }
+
+    - name: Criar pasta exclusiva do monitor
+      ansible.windows.win_file:
+        path: '{{ agent_directory }}'
+        state: directory
+
+    - name: Restringir acesso ao executavel e aos segredos
+      ansible.windows.win_powershell:
+        error_action: stop
+        parameters:
+          Directory: '{{ agent_directory }}'
+        script: |
+          param([string]$Directory)
+          $item = Get-Item -LiteralPath $Directory -Force
+          if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw 'A pasta do monitor nao pode ser um link ou junction.'
+          }
+          $current = Get-Acl -LiteralPath $Directory
+          $acl = New-Object System.Security.AccessControl.DirectorySecurity
+          $acl.SetAccessRuleProtection($true, $false)
+          foreach ($value in @('S-1-5-32-544', 'S-1-5-18')) {
+            $sid = New-Object System.Security.Principal.SecurityIdentifier($value)
+            $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+              $sid, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')
+            $acl.AddAccessRule($rule)
+          }
+          $section = [System.Security.AccessControl.AccessControlSections]::Access
+          $Ansible.Changed = $current.GetSecurityDescriptorSddlForm($section) -ne $acl.GetSecurityDescriptorSddlForm($section)
+          if ($Ansible.Changed) { Set-Acl -LiteralPath $Directory -AclObject $acl }
+
+    - name: Parar somente a tarefa deste monitor antes da atualizacao
+      ansible.windows.win_powershell:
+        error_action: stop
+        parameters:
+          TaskName: '{{ agent_task }}'
+          Executable: '{{ agent_directory }}\monitor-ifc8.exe'
+        script: |
+          param([string]$TaskName, [string]$Executable)
+          $task = Get-ScheduledTask | Where-Object { $_.TaskName -eq $TaskName -and $_.TaskPath -eq '\' }
+          $Ansible.Changed = $false
+          if ($task) {
+            if (@($task.Actions).Count -ne 1 -or $task.Actions[0].Execute -ne $Executable) {
+              throw 'A tarefa existente nao pertence a este monitor.'
+            }
+            if ($task.State -eq 'Running') {
+              Stop-ScheduledTask -InputObject $task
+              $deadline = (Get-Date).AddSeconds(30)
+              do {
+                Start-Sleep -Milliseconds 500
+                $task = Get-ScheduledTask -TaskName $TaskName -TaskPath '\'
+              } while ($task.State -eq 'Running' -and (Get-Date) -lt $deadline)
+              if ($task.State -eq 'Running') { throw 'O monitor nao encerrou em 30 segundos.' }
+              $Ansible.Changed = $true
+            }
+          }
+
+    - name: Copiar agente Go
+      ansible.windows.win_copy:
+        src: '{{ agent_binary_src }}'
+        dest: '{{ agent_directory }}\monitor-ifc8.exe'
+
+    - name: Gravar configuracao do local sem expor segredos
+      ansible.windows.win_copy:
+        dest: '{{ agent_directory }}\.env'
+        content: |
+          TELEGRAM_BOT_TOKEN={{ telegram_bot_token }}
+          TELEGRAM_CHAT_ID={{ telegram_chat_id }}
+          TELEGRAM_TOPIC={{ agent_topic }}
+          TELEGRAM_TOPIC_ID={{ telegram_topics[agent_topic] }}
+          TELEGRAM_TOPIC_TAIBA_ID={{ telegram_topics.Taiba }}
+          TELEGRAM_TOPIC_CHARME_ID={{ telegram_topics.Charme }}
+          TELEGRAM_TOPIC_MAGNA_ID={{ telegram_topics.Magna }}
+          TELEGRAM_TOPIC_ACARAIZINHO_ID={{ telegram_topics.Acaraizinho }}
+          TELEGRAM_TOPIC_WIND_ID={{ telegram_topics.Wind }}
+          MONITOR_INTERVAL={{ agent_interval }}
+          ALERT_REPEAT_INTERVAL={{ agent_repeat_interval }}
+          IFC_CONFIG_PATH={{ ifc_config_path }}
+          IFC_LOG_PATH={{ ifc_log_path }}
+          IFC_LOG_MAX_AGE={{ ifc_log_max_age }}
+      no_log: true
+      diff: false
+
+    - name: Validar configuracao e leitura sem enviar alertas
+      ansible.windows.win_command:
+        argv:
+          - '{{ agent_directory }}\monitor-ifc8.exe'
+          - -env
+          - '{{ agent_directory }}\.env'
+          - -once
+          - -dry-run
+      changed_when: false
+
+    - name: Iniciar monitor automaticamente no boot
+      community.windows.win_scheduled_task:
+        name: '{{ agent_task }}'
+        path: '\'
+        description: Monitor IFC8 por processo e log com alertas Telegram por hotel.
+        actions:
+          - path: '{{ agent_directory }}\monitor-ifc8.exe'
+            arguments: '-env "{{ agent_directory }}\.env"'
+            working_directory: '{{ agent_directory }}'
+        triggers:
+          - type: boot
+        username: S-1-5-18
+        logon_type: service_account
+        run_level: highest
+        execution_time_limit: PT0S
+        multiple_instances: 2
+        restart_count: 3
+        restart_interval: PT1M
+        start_when_available: true
+        disallow_start_if_on_batteries: false
+        stop_if_going_on_batteries: false
+        enabled: true
+        state: present
+
+    - name: Iniciar monitor e confirmar sua execucao
+      ansible.windows.win_powershell:
+        error_action: stop
+        parameters:
+          TaskName: '{{ agent_task }}'
+        script: |
+          param([string]$TaskName)
+          Start-ScheduledTask -TaskName $TaskName -TaskPath '\'
+          Start-Sleep -Seconds 5
+          $task = Get-ScheduledTask -TaskName $TaskName -TaskPath '\'
+          if ($task.State -ne 'Running') {
+            $info = Get-ScheduledTaskInfo -TaskName $TaskName -TaskPath '\'
+            throw "O monitor encerrou. Resultado: $($info.LastTaskResult)"
+          }
+          $Ansible.Changed = $true
