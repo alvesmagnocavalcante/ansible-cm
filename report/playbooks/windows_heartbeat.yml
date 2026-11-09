@@ -7,28 +7,6 @@
   vars:
     heartbeat_shared_folder_path: 'C:\Micros\Simphony\WebServer\fiscal\nfce\request'
 
-    # Regex declarados uma vez, em aspas simples do YAML (a barra invertida chega intacta
-    # ao filtro, sem depender de escape duplo). Reaproveitados no diagnostico offline.
-    heartbeat_ip_regex: '\b(?:\d{1,3}\.){3}\d{1,3}\b'
-    heartbeat_ip_only_regex: '^(?:\d{1,3}\.){3}\d{1,3}$'
-
-    # Servicos automaticos que normalmente ficam parados (gatilho / atualizadores).
-    # Sobrescreva com heartbeat_ignored_services no inventario ou no Semaphore.
-    heartbeat_ignored_services_effective: >-
-      {{ heartbeat_ignored_services
-         | default(['gupdate', 'gupdatem', 'sppsvc', 'TrustedInstaller',
-                    'RemoteRegistry', 'edgeupdate', 'edgeupdatem']) }}
-
-    # 5986 (HTTPS) por padrao; 5985 quando o inventario usa esquema http.
-    heartbeat_winrm_port: >-
-      {{ ansible_port
-         | default(5985 if (ansible_winrm_scheme | default('https')) == 'http' else 5986) }}
-
-    # Evita que um host meio travado segure o play inteiro.
-    # read_timeout precisa ser maior que operation_timeout.
-    ansible_winrm_operation_timeout_sec: "{{ heartbeat_winrm_operation_timeout | default(30) }}"
-    ansible_winrm_read_timeout_sec: "{{ heartbeat_winrm_read_timeout | default(45) }}"
-
   tasks:
     - name: Criar grupo de relatorio somente na memoria do controlador
       ansible.builtin.add_host:
@@ -45,12 +23,12 @@
       register: heartbeat_ping
       changed_when: false
       failed_when: false
-      timeout: 30
 
     - name: Registrar estado de conectividade
       ansible.builtin.set_fact:
         heartbeat_reachable: >-
-          {{ ('__HEARTBEAT_OK__' in (heartbeat_ping.stdout | default(''))) | bool }}
+          {{ '__HEARTBEAT_OK__' in (heartbeat_ping.stdout | default('')) }}
+      delegate_to: localhost
 
     - name: Resolver endereco configurado do host offline
       ansible.builtin.command:
@@ -94,7 +72,7 @@
     - name: Testar porta WinRM do host offline pelo controlador
       ansible.builtin.wait_for:
         host: "{{ ansible_host | default(inventory_hostname) }}"
-        port: "{{ heartbeat_winrm_port | int }}"
+        port: "{{ ansible_port | default(5986) }}"
         state: started
         timeout: 3
       register: heartbeat_offline_winrm_port
@@ -106,38 +84,36 @@
     - name: Registrar diagnostico de host offline
       ansible.builtin.set_fact:
         heartbeat_offline_diagnostic:
-          target: "{{ _target }}"
+          target: "{{ ansible_host | default(inventory_hostname) }}"
           inventory_name: "{{ inventory_hostname }}"
-          winrm_reachable: false
           dns_target_resolves: "{{ heartbeat_offline_dns_target.rc == 0 }}"
-          dns_target_ips: "{{ _target_ips }}"
+          dns_target_ips: "{{ heartbeat_offline_dns_target.stdout | default('') | regex_findall('\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b') }}"
           dns_inventory_resolves: "{{ heartbeat_offline_dns_name.rc == 0 }}"
-          dns_inventory_ips: "{{ _name_ips }}"
-          ping_ok: "{{ _ping_ok }}"
-          winrm_port: "{{ heartbeat_winrm_port }}"
-          winrm_port_open: "{{ _winrm_open }}"
-          reason: "{{ _reason | trim }}"
-      vars:
-        _target: "{{ ansible_host | default(inventory_hostname) }}"
-        _target_ips: "{{ heartbeat_offline_dns_target.stdout | default('') | regex_findall(heartbeat_ip_regex) }}"
-        _name_ips: "{{ heartbeat_offline_dns_name.stdout | default('') | regex_findall(heartbeat_ip_regex) }}"
-        _target_is_ip: "{{ _target is match(heartbeat_ip_only_regex) }}"
-        _ping_ok: "{{ heartbeat_offline_ping.rc == 0 }}"
-        _winrm_open: "{{ heartbeat_offline_winrm_port.state | default('') == 'started' }}"
-        _reason: >-
-          {% if heartbeat_offline_dns_target.rc != 0 -%}
-          DNS nao resolve o endereco configurado.
-          {%- elif _target_is_ip and _name_ips | length > 0 and _target not in _name_ips -%}
-          Possivel IP alterado: o nome resolve para {{ _name_ips | join(', ') }}, mas o inventario usa {{ _target }}.
-          {%- elif _winrm_open -%}
-          Porta WinRM aberta, mas a validacao WinRM falhou. Verifique credenciais, TLS ou autorizacao.
-          {%- elif _ping_ok -%}
-          Host responde ping, mas a porta WinRM {{ heartbeat_winrm_port }} nao respondeu. Verifique servico WinRM ou firewall.
-          {%- elif _target_ips | length > 0 -%}
-          Sem ping e sem WinRM. Possivel maquina desligada, bloqueio de rede/firewall ou IP alterado.
-          {%- else -%}
-          Sem DNS, ping e WinRM. Verifique nome/IP no inventario.
-          {%- endif %}
+          dns_inventory_ips: "{{ heartbeat_offline_dns_name.stdout | default('') | regex_findall('\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b') }}"
+          ping_ok: "{{ heartbeat_offline_ping.rc == 0 }}"
+          winrm_port: "{{ ansible_port | default(5986) }}"
+          winrm_port_open: "{{ heartbeat_offline_winrm_port.state | default('') == 'started' }}"
+          reason: >-
+            {% set target = ansible_host | default(inventory_hostname) %}
+            {% set target_ips = heartbeat_offline_dns_target.stdout | default('') | regex_findall('\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b') %}
+            {% set name_ips = heartbeat_offline_dns_name.stdout | default('') | regex_findall('\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b') %}
+            {% set target_is_ip = target is match('^(?:\\d{1,3}\\.){3}\\d{1,3}$') %}
+            {% set ping_ok = heartbeat_offline_ping.rc == 0 %}
+            {% set winrm_open = heartbeat_offline_winrm_port.state | default('') == 'started' %}
+            {% if heartbeat_offline_dns_target.rc != 0 %}
+            DNS nao resolve o endereco configurado.
+            {% elif target_is_ip and name_ips | length > 0 and target not in name_ips %}
+            Possivel IP alterado: o nome resolve para {{ name_ips | join(', ') }}, mas o inventario usa {{ target }}.
+            {% elif winrm_open %}
+            Porta WinRM aberta, mas a validacao WinRM falhou. Verifique credenciais, TLS ou autorizacao.
+            {% elif ping_ok %}
+            Host responde ping, mas a porta WinRM {{ ansible_port | default(5986) }} nao respondeu. Verifique servico WinRM ou firewall.
+            {% elif target_ips | length > 0 %}
+            Sem ping e sem WinRM. Possivel maquina desligada, bloqueio de rede/firewall ou IP alterado.
+            {% else %}
+            Sem DNS, ping e WinRM. Verifique nome/IP no inventario.
+            {% endif %}
+      delegate_to: localhost
       when: not heartbeat_reachable
 
     - name: Consultar metricas somente leitura via PowerShell e CIM
@@ -145,15 +121,10 @@
         $ErrorActionPreference = 'Stop'
         $ProgressPreference = 'SilentlyContinue'
 
-        $ignoredServices = @({% for s in heartbeat_ignored_services_effective %}'{{ s }}'{% if not loop.last %},{% endif %}{% endfor %})
-
         $os = Get-CimInstance Win32_OperatingSystem
         $computer = Get-CimInstance Win32_ComputerSystem
-
-        # LoadPercentage pode vir nulo (VMs); ignora amostras nulas em vez de abortar a coleta.
-        $cpuSamples = @(Get-CimInstance Win32_Processor | Where-Object { $null -ne $_.LoadPercentage } | Select-Object -ExpandProperty LoadPercentage)
-        $cpu = if ($cpuSamples.Count -gt 0) { [math]::Round(($cpuSamples | Measure-Object -Average).Average, 1) } else { $null }
-
+        $cpuSamples = Get-CimInstance Win32_Processor | Select-Object -ExpandProperty LoadPercentage
+        $cpu = [math]::Round(($cpuSamples | Measure-Object -Average).Average, 1)
         $memoryUsed = [math]::Round((1 - ($os.FreePhysicalMemory / $os.TotalVisibleMemorySize)) * 100, 1)
         $uptime = (Get-Date) - $os.LastBootUpTime
 
@@ -168,15 +139,9 @@
           }
         )
 
-        # Ignora servicos de inicio atrasado e os da lista de excecoes.
-        $stoppedList = @(Get-CimInstance Win32_Service | Where-Object {
-          $_.StartMode -eq 'Auto' -and
-          $_.State -ne 'Running' -and
-          -not $_.DelayedAutoStart -and
-          $_.Name -notin $ignoredServices
-        })
-        $stoppedAutomatic = $stoppedList.Count
-        $stoppedNames = @($stoppedList | Select-Object -First 10 | ForEach-Object { $_.Name })
+        $stoppedAutomatic = @(Get-CimInstance Win32_Service | Where-Object {
+          $_.StartMode -eq 'Auto' -and $_.State -ne 'Running'
+        }).Count
 
         $dhcpAdapters = @()
         $dhcpEnabled = $null
@@ -229,7 +194,6 @@
           uptime_days = [math]::Round($uptime.TotalDays, 1)
           last_boot = $os.LastBootUpTime.ToString('yyyy-MM-dd HH:mm:ss')
           stopped_automatic_services = $stoppedAutomatic
-          stopped_automatic_services_names = $stoppedNames
           dhcp_enabled = $dhcpEnabled
           dhcp_status = $dhcpStatus
           dhcp_adapters = $dhcpAdapters
@@ -240,53 +204,26 @@
       register: heartbeat_raw
       changed_when: false
       failed_when: false
-      timeout: 120
       when: heartbeat_reachable
 
-    - name: Inicializar estado da coleta
-      ansible.builtin.set_fact:
-        heartbeat_collection_ok: false
-        heartbeat_data: {}
-        heartbeat_collection_error: ''
-
     - name: Normalizar dados coletados
-      block:
-        - name: Interpretar JSON das metricas
-          ansible.builtin.set_fact:
-            heartbeat_data: "{{ heartbeat_raw.stdout | trim | from_json }}"
-            heartbeat_collection_ok: true
-          when:
-            - heartbeat_reachable
-            - heartbeat_raw.rc | default(1) == 0
-            - heartbeat_raw.stdout | default('') | trim | length > 0
-      rescue:
-        - name: Registrar falha ao interpretar JSON das metricas
-          ansible.builtin.set_fact:
-            heartbeat_collection_ok: false
-            heartbeat_data: {}
-            heartbeat_collection_error: Resposta da coleta nao e um JSON valido.
-
-    - name: Registrar diagnostico de falha de coleta com WinRM ativo
       ansible.builtin.set_fact:
-        heartbeat_offline_diagnostic:
-          target: "{{ ansible_host | default(inventory_hostname) }}"
-          inventory_name: "{{ inventory_hostname }}"
-          winrm_reachable: true
-          winrm_port: "{{ heartbeat_winrm_port }}"
-          reason: >-
-            WinRM respondeu, mas a coleta de metricas falhou
-            (rc={{ heartbeat_raw.rc | default('n/d') }}).
-            {{ heartbeat_collection_error
-               if (heartbeat_collection_error | length > 0)
-               else (heartbeat_raw.stderr | default('') | trim)[:300] }}
-      when:
-        - heartbeat_reachable
-        - not heartbeat_collection_ok
+        heartbeat_collection_ok: >-
+          {{ heartbeat_reachable and
+             (heartbeat_raw.rc | default(1) == 0) and
+             (heartbeat_raw.stdout | default('') | length > 0) }}
+        heartbeat_data: >-
+          {{ (heartbeat_raw.stdout | from_json)
+             if (heartbeat_reachable and
+                 (heartbeat_raw.rc | default(1) == 0) and
+                 (heartbeat_raw.stdout | default('') | length > 0))
+             else {} }}
+      delegate_to: localhost
 
     - name: Consultar compartilhamento da pasta fiscal
       ansible.builtin.raw: |
         $ProgressPreference = 'SilentlyContinue'
-        $folderPath = '{{ heartbeat_shared_folder_path }}'
+        $folderPath = 'C:\Micros\Simphony\WebServer\fiscal\nfce\request'
         $exists = $false
         $accessible = $false
         $direct = $false
@@ -299,7 +236,7 @@
         try {
           $target = [IO.Path]::GetFullPath($folderPath).TrimEnd('\')
           $exists = Test-Path -LiteralPath $target -PathType Container
-          $shareMatches = @(
+          $matches = @(
             Get-SmbShare -ErrorAction Stop | Where-Object { $_.Path -and -not $_.Special } | ForEach-Object {
               $base = [IO.Path]::GetFullPath($_.Path).TrimEnd('\')
               $isDirect = $target -ieq $base
@@ -310,7 +247,7 @@
             }
           )
 
-          $share = $shareMatches | Sort-Object -Property @{Expression={$_.direct}; Descending=$true}, @{Expression={$_.base.Length}; Descending=$true} | Select-Object -First 1
+          $share = $matches | Sort-Object -Property @{Expression={$_.direct}; Descending=$true}, @{Expression={$_.base.Length}; Descending=$true} | Select-Object -First 1
 
           if (-not $exists) {
             $status = 'Pasta inexistente'
@@ -346,38 +283,34 @@
       register: heartbeat_shared_folder_raw
       changed_when: false
       failed_when: false
-      timeout: 60
-      when: heartbeat_collection_ok
-
-    - name: Inicializar dados da pasta fiscal com valores de falha
-      ansible.builtin.set_fact:
-        heartbeat_shared_folder_data:
-          shared_folder_path: "{{ heartbeat_shared_folder_path }}"
-          shared_folder_exists: false
-          shared_folder_accessible: false
-          shared_folder_direct: false
-          shared_folder_share_name: null
-          shared_folder_share_path: null
-          shared_folder_unc_path: null
-          shared_folder_status: Erro ao consultar
-          shared_folder_error: Falha na tarefa PowerShell
       when: heartbeat_collection_ok
 
     - name: Normalizar verificacao da pasta fiscal
-      block:
-        - name: Interpretar JSON da pasta fiscal
-          ansible.builtin.set_fact:
-            heartbeat_shared_folder_data: "{{ heartbeat_shared_folder_raw.stdout | trim | from_json }}"
-          when:
-            - heartbeat_collection_ok
-            - heartbeat_shared_folder_raw.rc | default(1) == 0
-            - heartbeat_shared_folder_raw.stdout | default('') | trim | length > 0
-      rescue:
-        - name: Registrar JSON invalido da pasta fiscal
-          ansible.builtin.set_fact:
-            heartbeat_shared_folder_data: >-
-              {{ heartbeat_shared_folder_data
-                 | combine({'shared_folder_error': 'Resposta invalida da tarefa PowerShell'}) }}
+      ansible.builtin.set_fact:
+        heartbeat_shared_folder_data: >-
+          {{ (heartbeat_shared_folder_raw.stdout | trim | from_json)
+             if ((heartbeat_shared_folder_raw.rc | default(1) == 0) and
+                 (heartbeat_shared_folder_raw.stdout | default('') | trim | length > 0))
+             else {
+               'shared_folder_path': heartbeat_shared_folder_path,
+               'shared_folder_exists': false,
+               'shared_folder_accessible': false,
+               'shared_folder_direct': false,
+               'shared_folder_share_name': none,
+               'shared_folder_share_path': none,
+               'shared_folder_unc_path': none,
+               'shared_folder_status': 'Erro ao consultar',
+               'shared_folder_error': 'Falha na tarefa PowerShell'
+             } }}
+      delegate_to: localhost
+      when: heartbeat_collection_ok
+
+    - name: Adicionar verificacao da pasta aos dados coletados
+      ansible.builtin.set_fact:
+        heartbeat_data: >-
+          {{ heartbeat_data | combine(heartbeat_shared_folder_data, recursive=true) }}
+      delegate_to: localhost
+      when: heartbeat_collection_ok
 
     - name: Consultar Defender e Firewall sem afetar status online
       ansible.builtin.raw: |
@@ -456,45 +389,33 @@
       register: heartbeat_security_raw
       changed_when: false
       failed_when: false
-      timeout: 60
       when: heartbeat_collection_ok
 
-    - name: Inicializar dados de Defender e Firewall com valores de falha
+    - name: Adicionar Defender e Firewall aos dados coletados
       ansible.builtin.set_fact:
-        heartbeat_security_data:
-          defender_enabled: null
-          defender_realtime_enabled: null
-          defender_status: Indisponivel
-          defender_signature_age_days: null
-          defender_error: Falha ao consultar
-          firewall_all_enabled: null
-          firewall_status: Indisponivel
-          firewall_profiles: []
-          firewall_error: Falha ao consultar
+        heartbeat_security_data: >-
+          {{ (heartbeat_security_raw.stdout | from_json)
+             if ((heartbeat_security_raw.rc | default(1) == 0) and
+                 (heartbeat_security_raw.stdout | default('') | length > 0))
+             else {
+               'defender_enabled': none,
+               'defender_realtime_enabled': none,
+               'defender_status': 'Indisponivel',
+               'defender_signature_age_days': none,
+               'defender_error': 'Falha ao consultar',
+               'firewall_all_enabled': none,
+               'firewall_status': 'Indisponivel',
+               'firewall_profiles': [],
+               'firewall_error': 'Falha ao consultar'
+             } }}
+      delegate_to: localhost
       when: heartbeat_collection_ok
 
-    - name: Normalizar verificacao de Defender e Firewall
-      block:
-        - name: Interpretar JSON de Defender e Firewall
-          ansible.builtin.set_fact:
-            heartbeat_security_data: "{{ heartbeat_security_raw.stdout | trim | from_json }}"
-          when:
-            - heartbeat_collection_ok
-            - heartbeat_security_raw.rc | default(1) == 0
-            - heartbeat_security_raw.stdout | default('') | trim | length > 0
-      rescue:
-        - name: Registrar JSON invalido de Defender e Firewall
-          ansible.builtin.set_fact:
-            heartbeat_security_data: >-
-              {{ heartbeat_security_data
-                 | combine({'defender_error': 'Resposta invalida da tarefa PowerShell',
-                            'firewall_error': 'Resposta invalida da tarefa PowerShell'}) }}
-
-    - name: Mesclar pasta fiscal, Defender e Firewall no relatorio do host
+    - name: Mesclar Defender e Firewall no relatorio do host
       ansible.builtin.set_fact:
         heartbeat_data: >-
-          {{ heartbeat_data
-             | combine(heartbeat_shared_folder_data, heartbeat_security_data, recursive=true) }}
+          {{ heartbeat_data | combine(heartbeat_security_data, recursive=true) }}
+      delegate_to: localhost
       when: heartbeat_collection_ok
 
 - name: Gerar e enviar relatorio consolidado
@@ -519,73 +440,60 @@
           {{ groups['heartbeat_report_hosts'] | default([]) | length }} hosts serao
           incluidos no relatorio.
 
-    - name: Classificar hosts online e offline
+    - name: Inicializar classificacao dos hosts
       ansible.builtin.set_fact:
         heartbeat_hosts: "{{ groups['heartbeat_report_hosts'] | default([]) }}"
-        heartbeat_online_hosts: "{{ _online }}"
-        heartbeat_offline_hosts: "{{ groups['heartbeat_report_hosts'] | default([]) | reject('in', _online) | list }}"
-      vars:
-        _online: >-
-          {{ groups['heartbeat_report_hosts'] | default([])
-             | map('extract', hostvars)
-             | selectattr('heartbeat_collection_ok', 'defined')
-             | selectattr('heartbeat_collection_ok')
-             | map(attribute='inventory_hostname')
-             | list }}
+        heartbeat_online_hosts: []
+        heartbeat_offline_hosts: []
+        heartbeat_alert_hosts: []
+        heartbeat_defender_alert_hosts: []
+        heartbeat_shared_folder_hosts: []
 
-    - name: Calcular motivos de alerta por host online
+    - name: Classificar hosts online e offline
       ansible.builtin.set_fact:
-        heartbeat_alert_reasons: "{{ heartbeat_alert_reasons | default({}) | combine({item: _general_reasons}) }}"
-        heartbeat_defender_alert_reasons: "{{ heartbeat_defender_alert_reasons | default({}) | combine({item: _security_reasons}) }}"
+        heartbeat_online_hosts: >-
+          {{ heartbeat_online_hosts +
+             ([item] if hostvars[item].heartbeat_collection_ok | default(false) else []) }}
+        heartbeat_offline_hosts: >-
+          {{ heartbeat_offline_hosts +
+             ([] if hostvars[item].heartbeat_collection_ok | default(false) else [item]) }}
+      loop: "{{ heartbeat_hosts }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Identificar hosts com alertas
+      ansible.builtin.set_fact:
+        heartbeat_alert_hosts: "{{ heartbeat_alert_hosts + [item] }}"
       loop: "{{ heartbeat_online_hosts }}"
       loop_control:
         label: "{{ item }}"
       vars:
         current_data: "{{ hostvars[item].heartbeat_data | default({}) }}"
-        _low_disks: >-
-          {{ current_data.disks | default([], true)
-             | selectattr('free_percent', 'le', disk_warning_percent | float)
-             | map(attribute='drive') | list }}
-        _general_reasons: >-
-          {{ (['CPU alta (' ~ current_data.cpu_percent ~ '%)']
-                if (current_data.cpu_percent | default(0, true) | float) >= (cpu_warning_percent | float)
-                else [])
-             + (['Memoria alta (' ~ current_data.memory_used_percent ~ '%)']
-                if (current_data.memory_used_percent | default(0, true) | float) >= (memory_warning_percent | float)
-                else [])
-             + (['Servicos automaticos parados: ' ~ current_data.stopped_automatic_services]
-                if (current_data.stopped_automatic_services | default(0, true) | int) > 0
-                else [])
-             + (['Pouco espaco em disco: ' ~ (_low_disks | join(', '))]
-                if (_low_disks | length) > 0
-                else []) }}
-        _security_reasons: >-
-          {{ (['Defender desativado']
-                if (current_data.defender_enabled | default(true)) is sameas false else [])
-             + (['Protecao em tempo real desativada']
-                if (current_data.defender_realtime_enabled | default(true)) is sameas false else [])
-             + (['Firewall desativado']
-                if (current_data.firewall_all_enabled | default(true)) is sameas false else [])
-             + (['Erro ao consultar Defender']
-                if (current_data.defender_error | default('', true) | string | length) > 0 else [])
-             + (['Erro ao consultar Firewall']
-                if (current_data.firewall_error | default('', true) | string | length) > 0 else []) }}
+      when: >-
+        ((current_data.cpu_percent | default(0, true) | float) >= (cpu_warning_percent | float)) or
+        ((current_data.memory_used_percent | default(0, true) | float) >= (memory_warning_percent | float)) or
+        ((current_data.stopped_automatic_services | default(0, true) | int) > 0) or
+        ((current_data.disks | default([], true) |
+         selectattr('free_percent', 'le', disk_warning_percent) | list | length) > 0)
 
-    - name: Identificar hosts com alertas e hosts a exibir primeiro
+    - name: Identificar hosts com Defender ou Firewall desativado
       ansible.builtin.set_fact:
-        heartbeat_alert_hosts: "{{ _alert }}"
-        heartbeat_defender_alert_hosts: "{{ _defender }}"
-        heartbeat_sorted_hosts: >-
-          {{ heartbeat_offline_hosts
-             + (heartbeat_online_hosts | select('in', _alert + _defender) | list)
-             + (heartbeat_online_hosts | reject('in', _alert + _defender) | list) }}
+        heartbeat_defender_alert_hosts: "{{ heartbeat_defender_alert_hosts + [item] }}"
+      loop: "{{ heartbeat_online_hosts }}"
+      loop_control:
+        label: "{{ item }}"
       vars:
-        _alert: "{{ heartbeat_alert_reasons | default({}) | dict2items | selectattr('value') | map(attribute='key') | list }}"
-        _defender: "{{ heartbeat_defender_alert_reasons | default({}) | dict2items | selectattr('value') | map(attribute='key') | list }}"
+        current_data: "{{ hostvars[item].heartbeat_data | default({}) }}"
+      when: >-
+        ((current_data.defender_enabled | default(true, true)) == false) or
+        ((current_data.defender_realtime_enabled | default(true, true)) == false) or
+        ((current_data.firewall_all_enabled | default(true, true)) == false) or
+        ((current_data.defender_error | default('', true) | string | length) > 0) or
+        ((current_data.firewall_error | default('', true) | string | length) > 0)
 
     - name: Identificar hosts com a pasta fiscal compartilhada
       ansible.builtin.set_fact:
-        heartbeat_shared_folder_hosts: "{{ heartbeat_shared_folder_hosts | default([]) + [item] }}"
+        heartbeat_shared_folder_hosts: "{{ heartbeat_shared_folder_hosts + [item] }}"
       loop: "{{ heartbeat_online_hosts }}"
       loop_control:
         label: "{{ item }}"
@@ -593,11 +501,7 @@
         current_data: "{{ hostvars[item].heartbeat_data | default({}) }}"
       when: current_data.shared_folder_accessible | default(false) | bool
 
-    - name: Garantir lista de pasta compartilhada mesmo vazia
-      ansible.builtin.set_fact:
-        heartbeat_shared_folder_hosts: "{{ heartbeat_shared_folder_hosts | default([]) }}"
-
-    - name: Exibir status de Defender, Firewall e DHCP
+    - name: Exibir status de Defender e Firewall
       ansible.builtin.debug:
         msg: >-
           {{ item }}:
@@ -610,17 +514,15 @@
       vars:
         current_data: "{{ hostvars[item].heartbeat_data | default({}) }}"
 
-    - name: Exibir diagnostico dos hosts offline ou sem coleta
+    - name: Exibir diagnostico dos hosts offline
       ansible.builtin.debug:
         msg: >-
           {{ item }}:
           {{ offline_diag.reason | default('Diagnostico indisponivel', true) }}
-          Target={{ offline_diag.target | default(hostvars[item].ansible_host | default(item), true) }}
-          {% if not (offline_diag.winrm_reachable | default(false) | bool) -%}
-          ; DNS={{ 'OK' if offline_diag.dns_target_resolves | default(false) | bool else 'Falhou' }};
+          Target={{ offline_diag.target | default(hostvars[item].ansible_host | default(item), true) }};
+          DNS={{ 'OK' if offline_diag.dns_target_resolves | default(false) | bool else 'Falhou' }};
           Ping={{ 'OK' if offline_diag.ping_ok | default(false) | bool else 'Falhou' }};
           WinRM={{ 'OK' if offline_diag.winrm_port_open | default(false) | bool else 'Falhou' }}
-          {%- endif %}
       loop: "{{ heartbeat_offline_hosts }}"
       loop_control:
         label: "{{ item }}"
@@ -711,9 +613,6 @@
           Verifique DNS/rede do servidor onde o Semaphore executa ou informe um IP em HEARTBEAT_SMTP_HOST.
       when: send_email | bool
 
-    # O parametro password do modulo mail ja e mascarado pelo proprio Ansible.
-    # no_log fica desligado por padrao para que erros de envio (auth, TLS, relay)
-    # aparecam no log do Semaphore. Defina heartbeat_mail_no_log=true para silenciar.
     - name: Enviar heartbeat por e-mail
       community.general.mail:
         host: "{{ smtp_host }}"
@@ -728,7 +627,7 @@
           {{ ansible_facts['date_time']['date'] }}
         subtype: html
         body: "{{ heartbeat_report_html }}"
-      no_log: "{{ heartbeat_mail_no_log | default(false) | bool }}"
+      no_log: true
       when: send_email | bool
 
     - name: Informar conclusao do relatorio
